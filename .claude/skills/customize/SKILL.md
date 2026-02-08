@@ -19,19 +19,19 @@ This skill helps users add capabilities or modify behavior. Use AskUserQuestion 
 | File | Purpose |
 |------|---------|
 | `src/config.ts` | Assistant name, trigger pattern, directories |
-| `src/index.ts` | Message routing, WhatsApp connection, agent invocation |
+| `src/index.ts` | Message routing, Telegram bot, agent invocation |
 | `src/db.ts` | Database initialization and queries |
 | `src/types.ts` | TypeScript interfaces |
-| `src/whatsapp-auth.ts` | Standalone WhatsApp authentication script |
+| `src/telegram-auth.ts` | Standalone Telegram bot authentication script |
 | `.mcp.json` | MCP server configuration (reference) |
 | `groups/CLAUDE.md` | Global memory/persona |
 
 ## Common Customization Patterns
 
-### Adding a New Input Channel (e.g., Telegram, Slack, Email)
+### Adding a New Input Channel (e.g., WhatsApp, Slack, Email)
 
 Questions to ask:
-- Which channel? (Telegram, Slack, Discord, email, SMS, etc.)
+- Which channel? (WhatsApp, Slack, Discord, email, SMS, etc.)
 - Same trigger word or different?
 - Same memory hierarchy or separate?
 - Should messages from this channel go to existing groups or new ones?
@@ -98,11 +98,11 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 
 ## Example Interaction
 
-User: "Add Telegram as an input channel"
+User: "Add Slack as an input channel"
 
-1. Ask: "Should Telegram use the same @Andy trigger, or a different one?"
-2. Ask: "Should Telegram messages create separate conversation contexts, or share with WhatsApp groups?"
-3. Find Telegram MCP or library
+1. Ask: "Should Slack use the same @Andy trigger, or a different one?"
+2. Ask: "Should Slack messages create separate conversation contexts, or share with Telegram groups?"
+3. Find Slack MCP or library
 4. Add connection handling in index.ts
 5. Update message storage in db.ts
 6. Tell user how to authenticate and test

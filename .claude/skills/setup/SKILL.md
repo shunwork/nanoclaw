@@ -1,11 +1,11 @@
 ---
 name: setup
-description: Run initial NanoClaw setup. Use when user wants to install dependencies, authenticate WhatsApp, register their main channel, or start the background services. Triggers on "setup", "install", "configure nanoclaw", or first-time setup requests.
+description: Run initial NanoClaw setup. Use when user wants to install dependencies, authenticate Telegram bot, register their main channel, or start the background services. Triggers on "setup", "install", "configure nanoclaw", or first-time setup requests.
 ---
 
 # NanoClaw Setup
 
-Run all commands automatically. Only pause when user action is required (scanning QR codes).
+Run all commands automatically. Only pause when user action is required (providing tokens or selecting options).
 
 **UX Note:** When asking the user questions, prefer using the `AskUserQuestion` tool instead of just outputting text. This integrates with Claude's built-in question/answer system for a better experience.
 
@@ -137,27 +137,29 @@ else
 fi
 ```
 
-## 5. WhatsApp Authentication
+## 5. Telegram Bot Authentication
 
 **USER ACTION REQUIRED**
 
-**IMPORTANT:** Run this command in the **foreground**. The QR code is multi-line ASCII art that must be displayed in full. Do NOT run in background or truncate the output.
-
 Tell the user:
-> A QR code will appear below. On your phone:
-> 1. Open WhatsApp
-> 2. Tap **Settings → Linked Devices → Link a Device**
-> 3. Scan the QR code
+> You need a Telegram Bot Token. To get one:
+> 1. Open Telegram and message **@BotFather**
+> 2. Send `/newbot` and follow the prompts
+> 3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+> 4. Add it to your `.env` file as `TELEGRAM_BOT_TOKEN=your-token-here`
 
-Run with a long Bash tool timeout (120000ms) so the user has time to scan. Do NOT use the `timeout` shell command (it's not available on macOS).
+Once they've added the token, verify it works:
 
 ```bash
 npm run auth
 ```
 
-Wait for the script to output "Successfully authenticated" then continue.
+Wait for the script to output "Telegram bot authenticated!" then continue.
 
-If it says "Already authenticated", skip to the next step.
+If the token is invalid, ask the user to double-check it with @BotFather.
+
+**Important:** Tell the user to disable privacy mode if they want the bot to see all group messages:
+> In @BotFather, send `/setprivacy`, select your bot, and choose **Disable**. This allows the bot to see all messages in groups, not just @mentions.
 
 ## 6. Configure Assistant Name and Main Channel
 
@@ -185,18 +187,17 @@ Store their choice for use in the steps below.
 > - Can write to global memory that all groups can read
 > - Has read-write access to the entire NanoClaw project
 >
-> **Recommendation:** Use your personal "Message Yourself" chat or a solo WhatsApp group as your main channel. This ensures only you have admin control.
+> **Recommendation:** Use your private chat with the bot as your main channel. This ensures only you have admin control.
 >
 > **Question:** Which setup will you use for your main channel?
 >
 > Options:
-> 1. Personal chat (Message Yourself) - Recommended
-> 2. Solo WhatsApp group (just me)
-> 3. Group with other people (I understand the security implications)
+> 1. Private chat with the bot (just you) - Recommended
+> 2. A Telegram group (I understand the security implications)
 
-If they choose option 3, ask a follow-up:
+If they choose option 2, ask a follow-up:
 
-> You've chosen a group with other people. This means everyone in that group will have admin privileges over NanoClaw.
+> You've chosen a group. This means everyone in that group will have admin privileges over NanoClaw.
 >
 > Are you sure you want to proceed? The other members will be able to:
 > - Read messages from your other registered chats
@@ -205,11 +206,13 @@ If they choose option 3, ask a follow-up:
 >
 > Options:
 > 1. Yes, I understand and want to proceed
-> 2. No, let me use a personal chat or solo group instead
+> 2. No, let me use private chat instead
 
 ### 6c. Register the main channel
 
-First build, then start the app briefly to connect to WhatsApp and sync group metadata. Use the Bash tool's timeout parameter (15000ms) — do NOT use the `timeout` shell command (it's not available on macOS). The app will be killed when the timeout fires, which is expected.
+**For private chat** (they chose option 1):
+
+Ask the user to send any message to the bot in Telegram. Then briefly start the app to capture the chat ID. Build first:
 
 ```bash
 npm run build
@@ -220,21 +223,32 @@ Then run briefly (set Bash tool timeout to 15000ms):
 npm run dev
 ```
 
-**For personal chat** (they chose option 1):
-
-Personal chats are NOT synced to the database on startup — only groups are. Instead, ask the user for their phone number (with country code, no + or spaces, e.g. `14155551234`), then construct the JID as `{number}@s.whatsapp.net`.
-
-**For group** (they chose option 2 or 3):
-
-Groups are synced on startup via `groupFetchAllParticipating`. Query the database for recent groups:
+After the app runs briefly, check the database for the user's private chat:
 ```bash
-sqlite3 store/messages.db "SELECT jid, name FROM chats WHERE jid LIKE '%@g.us' AND jid != '__group_sync__' ORDER BY last_message_time DESC LIMIT 40"
+sqlite3 store/messages.db "SELECT jid, name FROM chats WHERE CAST(jid AS INTEGER) > 0 ORDER BY last_message_time DESC LIMIT 10"
 ```
 
-Show only the **10 most recent** group names to the user and ask them to pick one. If they say their group isn't in the list, show the next batch from the results you already have. If they tell you the group name directly, look it up:
+The user's private chat ID will be a positive number (e.g., `123456789`).
+
+**For group** (they chose option 2):
+
+Ask the user to add the bot to the group first. Then build and run briefly:
+
 ```bash
-sqlite3 store/messages.db "SELECT jid, name FROM chats WHERE name LIKE '%GROUP_NAME%' AND jid LIKE '%@g.us'"
+npm run build
 ```
+
+Then run briefly (set Bash tool timeout to 15000ms):
+```bash
+npm run dev
+```
+
+Query the database for recent groups (Telegram group IDs are negative):
+```bash
+sqlite3 store/messages.db "SELECT jid, name FROM chats WHERE CAST(jid AS INTEGER) < 0 ORDER BY last_message_time DESC LIMIT 10"
+```
+
+Show the group names to the user and ask them to pick one. If their group isn't listed, ask them to send a message in the group while the bot is a member, then re-query.
 
 ### 6d. Write the configuration
 
@@ -320,7 +334,7 @@ For each directory they provide, ask:
 ### 7b. Configure Non-Main Group Access
 
 Ask the user:
-> Should **non-main groups** (other WhatsApp chats you add later) be restricted to **read-only** access even if read-write is allowed for the directory?
+> Should **non-main groups** (other Telegram chats you add later) be restricted to **read-only** access even if read-write is allowed for the directory?
 >
 > Recommended: **Yes** - this prevents other groups from modifying files even if you grant them access to a directory.
 
@@ -452,7 +466,7 @@ Check the logs:
 tail -f logs/nanoclaw.log
 ```
 
-The user should receive a response in WhatsApp.
+The user should receive a response in Telegram.
 
 ## Troubleshooting
 
@@ -471,9 +485,9 @@ The user should receive a response in WhatsApp.
 - Check that the chat JID is in the database: `sqlite3 store/messages.db "SELECT * FROM registered_groups"`
 - Check `logs/nanoclaw.log` for errors
 
-**WhatsApp disconnected**:
-- The service will show a macOS notification
-- Run `npm run auth` to re-authenticate
+**Telegram bot not responding**:
+- Check that `TELEGRAM_BOT_TOKEN` is set correctly in `.env`
+- Run `npm run auth` to verify the token
 - Restart the service: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
 
 **Unload service**:
