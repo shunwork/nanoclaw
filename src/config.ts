@@ -1,6 +1,6 @@
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Cal';
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts

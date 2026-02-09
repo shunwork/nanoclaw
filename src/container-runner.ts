@@ -170,7 +170,7 @@ function buildVolumeMounts(
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Apple Container: --mount for readonly, -v for read-write
+  // Docker: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(
@@ -229,7 +229,7 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const container = spawn('docker', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -285,7 +285,7 @@ export async function runContainerAgent(
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
       // Graceful stop: sends SIGTERM, waits, then SIGKILL — lets --rm fire
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');

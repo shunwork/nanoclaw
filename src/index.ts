@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
+import https from 'https';
 import path from 'path';
 
 import { Bot } from 'grammy';
@@ -692,7 +693,11 @@ async function startTelegramBot(): Promise<void> {
     process.exit(1);
   }
 
-  bot = new Bot(token);
+  // Force IPv4 to avoid IPv6 connectivity issues with Telegram API
+  const ipv4Agent = new https.Agent({ family: 4 });
+  bot = new Bot(token, {
+    client: { baseFetchConfig: { agent: ipv4Agent } },
+  });
 
   // Verify token and get bot info
   const botInfo = await bot.api.getMe();
@@ -825,46 +830,37 @@ function recoverPendingMessages(): void {
 
 function ensureContainerSystemRunning(): void {
   try {
-    execSync('container system status', { stdio: 'pipe' });
-    logger.debug('Apple Container system already running');
+    execSync('docker info', { stdio: 'pipe' });
+    logger.debug('Docker is running');
   } catch {
-    logger.info('Starting Apple Container system...');
-    try {
-      execSync('container system start', { stdio: 'pipe', timeout: 30000 });
-      logger.info('Apple Container system started');
-    } catch (err) {
-      logger.error({ err }, 'Failed to start Apple Container system');
-      console.error(
-        '\n╔════════════════════════════════════════════════════════════════╗',
-      );
-      console.error(
-        '║  FATAL: Apple Container system failed to start                 ║',
-      );
-      console.error(
-        '║                                                                ║',
-      );
-      console.error(
-        '║  Agents cannot run without Apple Container. To fix:           ║',
-      );
-      console.error(
-        '║  1. Install from: https://github.com/apple/container/releases ║',
-      );
-      console.error(
-        '║  2. Run: container system start                               ║',
-      );
-      console.error(
-        '║  3. Restart NanoClaw                                          ║',
-      );
-      console.error(
-        '╚════════════════════════════════════════════════════════════════╝\n',
-      );
-      throw new Error('Apple Container system is required but failed to start');
-    }
+    logger.error('Docker is not running');
+    console.error(
+      '\n╔════════════════════════════════════════════════════════════════╗',
+    );
+    console.error(
+      '║  FATAL: Docker is not running                                  ║',
+    );
+    console.error(
+      '║                                                                ║',
+    );
+    console.error(
+      '║  Agents cannot run without Docker. To fix:                    ║',
+    );
+    console.error(
+      '║  1. Start Docker Desktop or the Docker daemon                 ║',
+    );
+    console.error(
+      '║  2. Restart NanoClaw                                          ║',
+    );
+    console.error(
+      '╚════════════════════════════════════════════════════════════════╝\n',
+    );
+    throw new Error('Docker is required but not running');
   }
 
   // Clean up stopped NanoClaw containers from previous runs
   try {
-    const output = execSync('container ls -a --format {{.Names}}', {
+    const output = execSync('docker ps -a --filter name=nanoclaw- --format {{.Names}}', {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
@@ -873,11 +869,11 @@ function ensureContainerSystemRunning(): void {
       .map((n) => n.trim())
       .filter((n) => n.startsWith('nanoclaw-'));
     if (stale.length > 0) {
-      execSync(`container rm ${stale.join(' ')}`, { stdio: 'pipe' });
+      execSync(`docker rm ${stale.join(' ')}`, { stdio: 'pipe' });
       logger.info({ count: stale.length }, 'Cleaned up stopped containers');
     }
   } catch {
-    // No stopped containers or ls/rm not supported
+    // No stopped containers
   }
 }
 

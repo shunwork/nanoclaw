@@ -6,6 +6,7 @@
  *
  * Usage: TELEGRAM_BOT_TOKEN=your-token npx tsx src/telegram-auth.ts
  */
+import https from 'https';
 import { Bot } from 'grammy';
 
 async function authenticate(): Promise<void> {
@@ -21,7 +22,11 @@ async function authenticate(): Promise<void> {
     process.exit(1);
   }
 
-  const bot = new Bot(token);
+  // Force IPv4 to avoid IPv6 connectivity issues with Telegram API
+  const ipv4Agent = new https.Agent({ family: 4 });
+  const bot = new Bot(token, {
+    client: { baseFetchConfig: { agent: ipv4Agent } },
+  });
   const me = await bot.api.getMe();
 
   console.log(`\n✓ Telegram bot authenticated!`);
