@@ -165,6 +165,23 @@ sessions (group_folder TEXT PK, session_id TEXT)
 | `/debug` | Container issues, logs, troubleshooting |
 | `/single-user-mode` | Convert from multi-group to single-user architecture |
 
+## Branch Strategy
+
+This is a fork of [gavrielc/nanoclaw](https://github.com/gavrielc/nanoclaw). Three branches serve different purposes:
+
+| Branch | Purpose | Merges from |
+|--------|---------|-------------|
+| `main` | Track upstream. Never commit custom changes here. | `upstream/main` |
+| `feature/customization` | Shareable skills (`.claude/skills/` only). PR-able back to upstream. | `main` |
+| `feature/mysetting` | Personal deployment. All customizations (Telegram, Docker, model, env, preferences). | `main` |
+
+**Rules:**
+- Sync upstream: `git fetch upstream && git checkout main && git merge upstream/main`
+- After syncing main, rebase both branches: `git checkout feature/mysetting && git rebase main`
+- New skills go on `feature/customization` first, then merge into `feature/mysetting`
+- Personal config changes (tokens, assistant name, language) only go on `feature/mysetting`
+- `feature/customization` should never contain `src/` code changes — only skill files
+
 ## Development
 
 Run commands directly — don't tell the user to run them.
