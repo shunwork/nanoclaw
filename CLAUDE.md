@@ -4,18 +4,18 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 ## Quick Context
 
-Single Node.js process that connects to Telegram via bot API, routes messages to Claude Agent SDK running in Apple Container (Linux VMs). Each group has isolated filesystem and memory.
+Single Node.js process that connects to Telegram via bot API, routes messages to Claude Agent SDK running in Docker containers. Single-user mode — serves one Telegram private chat (`OWNER_CHAT_JID`).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Main app: Telegram bot, message routing, IPC |
-| `src/config.ts` | Trigger pattern, paths, intervals |
+| `src/index.ts` | Main app: Telegram bot, message processing, IPC |
+| `src/config.ts` | Assistant name, owner chat JID, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `groups/main/CLAUDE.md` | Agent memory and instructions |
 | `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
 
 ## Skills

@@ -1,10 +1,9 @@
 /**
  * Container Runner for NanoClaw
- * Spawns agent execution in Apple Container and handles IPC
+ * Spawns agent execution in Docker container and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import {
@@ -16,28 +15,17 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { OwnerConfig } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-function getHomeDir(): string {
-  const home = process.env.HOME || os.homedir();
-  if (!home) {
-    throw new Error(
-      'Unable to determine home directory: HOME environment variable is not set and os.homedir() returned empty',
-    );
-  }
-  return home;
-}
 
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
 }
 
 export interface AgentResponse {
@@ -59,76 +47,49 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
-  group: RegisteredGroup,
-  isMain: boolean,
-): VolumeMount[] {
+function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
   const mounts: VolumeMount[] = [];
-  const homeDir = getHomeDir();
   const projectRoot = process.cwd();
 
-  if (isMain) {
-    // Main gets the entire project root mounted
-    mounts.push({
-      hostPath: projectRoot,
-      containerPath: '/workspace/project',
-      readonly: false,
-    });
+  // Always mount project root (single-user = full access)
+  mounts.push({
+    hostPath: projectRoot,
+    containerPath: '/workspace/project',
+    readonly: false,
+  });
 
-    // Main also gets its group folder as the working directory
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-  } else {
-    // Other groups only get their own folder
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
+  // Group folder as working directory
+  mounts.push({
+    hostPath: path.join(GROUPS_DIR, config.folder),
+    containerPath: '/workspace/group',
+    readonly: false,
+  });
 
-    // Global memory directory (read-only for non-main)
-    // Apple Container only supports directory mounts, not file mounts
-    const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
-      mounts.push({
-        hostPath: globalDir,
-        containerPath: '/workspace/global',
-        readonly: true,
-      });
-    }
-  }
-
-  // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
-  const groupSessionsDir = path.join(
+  // Claude sessions directory
+  const sessionsDir = path.join(
     DATA_DIR,
     'sessions',
-    group.folder,
+    config.folder,
     '.claude',
   );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  fs.mkdirSync(sessionsDir, { recursive: true });
   mounts.push({
-    hostPath: groupSessionsDir,
+    hostPath: sessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
   });
 
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  // IPC namespace
+  const ipcDir = path.join(DATA_DIR, 'ipc', config.folder);
+  fs.mkdirSync(path.join(ipcDir, 'messages'), { recursive: true });
+  fs.mkdirSync(path.join(ipcDir, 'tasks'), { recursive: true });
   mounts.push({
-    hostPath: groupIpcDir,
+    hostPath: ipcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
 
-  // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by Claude Code, not the entire .env
+  // Environment file directory
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
@@ -154,12 +115,10 @@ function buildVolumeMounts(
     }
   }
 
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
+  // Additional mounts validated against external allowlist
+  if (config.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain,
+      config.containerConfig.additionalMounts,
     );
     mounts.push(...validatedMounts);
   }
@@ -170,7 +129,6 @@ function buildVolumeMounts(
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Docker: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(
@@ -188,23 +146,21 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
 }
 
 export async function runContainerAgent(
-  group: RegisteredGroup,
+  config: OwnerConfig,
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
-  const groupDir = path.join(GROUPS_DIR, group.folder);
+  const groupDir = path.join(GROUPS_DIR, config.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
+  const mounts = buildVolumeMounts(config);
+  const containerName = `nanoclaw-main-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
-      group: group.name,
       containerName,
       mounts: mounts.map(
         (m) =>
@@ -217,15 +173,13 @@ export async function runContainerAgent(
 
   logger.info(
     {
-      group: group.name,
       containerName,
       mountCount: mounts.length,
-      isMain: input.isMain,
     },
     'Spawning container agent',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(GROUPS_DIR, config.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
@@ -251,7 +205,7 @@ export async function runContainerAgent(
         stdout += chunk.slice(0, remaining);
         stdoutTruncated = true;
         logger.warn(
-          { group: group.name, size: stdout.length },
+          { size: stdout.length },
           'Container stdout truncated due to size limit',
         );
       } else {
@@ -263,7 +217,7 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ container: config.folder }, line);
       }
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
@@ -271,7 +225,7 @@ export async function runContainerAgent(
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
-          { group: group.name, size: stderr.length },
+          { size: stderr.length },
           'Container stderr truncated due to size limit',
         );
       } else {
@@ -283,15 +237,14 @@ export async function runContainerAgent(
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      // Graceful stop: sends SIGTERM, waits, then SIGKILL — lets --rm fire
+      logger.error({ containerName }, 'Container timeout, stopping gracefully');
       exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
+          logger.warn({ containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');
         }
       });
-    }, group.containerConfig?.timeout || CONTAINER_TIMEOUT);
+    }, config.containerConfig?.timeout || CONTAINER_TIMEOUT);
 
     container.on('close', (code) => {
       clearTimeout(timeout);
@@ -303,21 +256,20 @@ export async function runContainerAgent(
         fs.writeFileSync(timeoutLog, [
           `=== Container Run Log (TIMEOUT) ===`,
           `Timestamp: ${new Date().toISOString()}`,
-          `Group: ${group.name}`,
           `Container: ${containerName}`,
           `Duration: ${duration}ms`,
           `Exit Code: ${code}`,
         ].join('\n'));
 
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { containerName, duration, code },
           'Container timed out',
         );
 
         resolve({
           status: 'error',
           result: null,
-          error: `Container timed out after ${group.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
+          error: `Container timed out after ${config.containerConfig?.timeout || CONTAINER_TIMEOUT}ms`,
         });
         return;
       }
@@ -330,8 +282,6 @@ export async function runContainerAgent(
       const logLines = [
         `=== Container Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
-        `Group: ${group.name}`,
-        `IsMain: ${input.isMain}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
         `Stdout Truncated: ${stdoutTruncated}`,
@@ -383,7 +333,6 @@ export async function runContainerAgent(
       if (code !== 0) {
         logger.error(
           {
-            group: group.name,
             code,
             duration,
             stderr,
@@ -421,7 +370,6 @@ export async function runContainerAgent(
 
         logger.info(
           {
-            group: group.name,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -433,7 +381,6 @@ export async function runContainerAgent(
       } catch (err) {
         logger.error(
           {
-            group: group.name,
             stdout,
             stderr,
             error: err,
@@ -451,7 +398,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error({ containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
         result: null,
@@ -463,7 +410,6 @@ export async function runContainerAgent(
 
 export function writeTasksSnapshot(
   groupFolder: string,
-  isMain: boolean,
   tasks: Array<{
     id: string;
     groupFolder: string;
@@ -474,53 +420,9 @@ export function writeTasksSnapshot(
     next_run: string | null;
   }>,
 ): void {
-  // Write filtered tasks to the group's IPC directory
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
-}
-
-export interface AvailableGroup {
-  jid: string;
-  name: string;
-  lastActivity: string;
-  isRegistered: boolean;
-}
-
-/**
- * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
- */
-export function writeGroupsSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  groups: AvailableGroup[],
-  registeredJids: Set<string>,
-): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
-
-  const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      {
-        groups: visibleGroups,
-        lastSync: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
+  fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
 }

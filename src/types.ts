@@ -14,8 +14,6 @@ export interface MountAllowlist {
   allowedRoots: AllowedRoot[];
   // Glob patterns for paths that should never be mounted (e.g., ".ssh", ".gnupg")
   blockedPatterns: string[];
-  // If true, non-main groups can only mount read-only regardless of config
-  nonMainReadOnly: boolean;
 }
 
 export interface AllowedRoot {
@@ -32,13 +30,10 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
-export interface RegisteredGroup {
-  name: string;
-  folder: string;
-  trigger: string;
-  added_at: string;
+export interface OwnerConfig {
+  chatJid: string;
+  folder: string; // Always 'main'
   containerConfig?: ContainerConfig;
-  requiresTrigger?: boolean; // Default: true for groups, false for solo chats
 }
 
 export interface NewMessage {

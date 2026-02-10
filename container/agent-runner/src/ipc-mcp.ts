@@ -16,7 +16,6 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 export interface IpcMcpContext {
   chatJid: string;
   groupFolder: string;
-  isMain: boolean;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -34,7 +33,7 @@ function writeIpcFile(dir: string, data: object): string {
 }
 
 export function createIpcMcp(ctx: IpcMcpContext) {
-  const { chatJid, groupFolder, isMain } = ctx;
+  const { chatJid, groupFolder } = ctx;
 
   return createSdkMcpServer({
     name: 'nanoclaw',
@@ -42,7 +41,7 @@ export function createIpcMcp(ctx: IpcMcpContext) {
     tools: [
       tool(
         'send_message',
-        'Send a message to the user or group. The message is delivered immediately while you\'re still running. You can call this multiple times to send multiple messages.',
+        'Send a message to the user. The message is delivered immediately while you\'re still running. You can call this multiple times to send multiple messages.',
         {
           text: z.string().describe('The message text to send')
         },
@@ -71,7 +70,7 @@ export function createIpcMcp(ctx: IpcMcpContext) {
         `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 
 CONTEXT MODE - Choose based on task type:
-• "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
+• "group": Task runs in the conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
 • "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
 
 If unsure which mode to use, you can ask the user. Examples:
@@ -89,7 +88,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
           schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
           schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
           context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-          ...(isMain ? { target_group_jid: z.string().optional().describe('JID of the group to schedule the task for. The group must be registered — look up JIDs in /workspace/project/data/registered_groups.json (the keys are JIDs). If the group is not registered, let the user know and ask if they want to activate it. Defaults to the current group.') } : {}),
         },
         async (args) => {
           // Validate schedule_value before writing IPC
@@ -120,16 +118,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
             }
           }
 
-          // Non-main groups can only schedule for themselves
-          const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
-
           const data = {
             type: 'schedule_task',
             prompt: args.prompt,
             schedule_type: args.schedule_type,
             schedule_value: args.schedule_value,
             context_mode: args.context_mode || 'group',
-            targetJid,
             createdBy: groupFolder,
             timestamp: new Date().toISOString()
           };
@@ -148,7 +142,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       // Reads from current_tasks.json which host keeps updated
       tool(
         'list_tasks',
-        'List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group\'s tasks.',
+        'List all scheduled tasks.',
         {},
         async () => {
           const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
@@ -163,11 +157,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
               };
             }
 
-            const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
-
-            const tasks = isMain
-              ? allTasks
-              : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+            const tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
             if (tasks.length === 0) {
               return {
@@ -210,7 +200,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
             type: 'pause_task',
             taskId: args.task_id,
             groupFolder,
-            isMain,
             timestamp: new Date().toISOString()
           };
 
@@ -236,7 +225,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
             type: 'resume_task',
             taskId: args.task_id,
             groupFolder,
-            isMain,
             timestamp: new Date().toISOString()
           };
 
@@ -262,7 +250,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
             type: 'cancel_task',
             taskId: args.task_id,
             groupFolder,
-            isMain,
             timestamp: new Date().toISOString()
           };
 
@@ -276,45 +263,6 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
           };
         }
       ),
-
-      tool(
-        'register_group',
-        `Register a new Telegram group/chat so the agent can respond to messages there. Main group only.
-
-Use available_groups.json to find the chat ID for a group. The folder name should be lowercase with hyphens (e.g., "family-chat").`,
-        {
-          jid: z.string().describe('The Telegram chat ID (e.g., "-1001234567890" for groups, "123456789" for private chats)'),
-          name: z.string().describe('Display name for the group'),
-          folder: z.string().describe('Folder name for group files (lowercase, hyphens, e.g., "family-chat")'),
-          trigger: z.string().describe('Trigger word (e.g., "@Andy")')
-        },
-        async (args) => {
-          if (!isMain) {
-            return {
-              content: [{ type: 'text', text: 'Only the main group can register new groups.' }],
-              isError: true
-            };
-          }
-
-          const data = {
-            type: 'register_group',
-            jid: args.jid,
-            name: args.name,
-            folder: args.folder,
-            trigger: args.trigger,
-            timestamp: new Date().toISOString()
-          };
-
-          writeIpcFile(TASKS_DIR, data);
-
-          return {
-            content: [{
-              type: 'text',
-              text: `Group "${args.name}" registered. It will start receiving messages immediately.`
-            }]
-          };
-        }
-      )
     ]
   });
 }
