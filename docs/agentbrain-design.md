@@ -10,22 +10,11 @@
 
 1. **Session + Context 混合**：保留 session resume 提供 tool call continuity，搭配 AgentBrain vault 提供跨 session 持久記憶。Agent 可自主決定何時 reset session。
 2. **檔案是持久記憶的唯一來源**：所有需要跨 session 存活的知識都在 AgentBrain vault 中，以 Obsidian 相容 markdown 儲存。
-3. **Agent 全權管理**：AgentBrain vault 整體 mount 給 agent，agent 透過 skills 定義的規範自主讀寫。
+3. **Agent 全權管理**：AgentBrain vault 整體 mount 給 agent，agent 透過 skills 定義的規範自主讀寫，包括人格和使用者 profile 的演進。
 4. **人機共讀**：所有檔案可用 Obsidian 直接開啟瀏覽、編輯，使用者隨時可以介入。
-5. **演進有節制**：人格與使用者 profile 的演進只在反思階段發生，避免 agent 過度適應單次對話的雜訊。
-6. **Skills-first**：所有新功能以 skill 形式加入，操作邏輯封裝在 skill 中，CLAUDE.md 保持精簡。
-
-### 與前提案的關係
-
-| 元素 | 來源 | 說明 |
-|------|------|------|
-| Session resume | 提案 B | 保留 tool call continuity |
-| Agent 管理 session reset | 提案 B（new_session）+ 改為 skill | Agent 自主決定，非固定閾值 |
-| 記憶檔案架構 | 提案 B/C + obsidian-agent-vault-v2 | AgentBrain 獨立 vault |
-| 人格 soul + identity 分離 | 提案 C + OpenClaw | agentmind/ 子目錄 |
-| 反思限制演進速度 | 新增 | 只在反思階段允許演進 |
-| 知識庫管理 | 新增 | knowledge/ + MOC + wiki-link |
-| Obsidian 官方 skills | obsidian-agent-vault-v2 | kepano/obsidian-skills |
+5. **演進有節制**：人格與使用者 profile 的演進只在反思階段發生，避免 agent 過度適應單次對話的雜訊。演進由 agent 自主完成，不需使用者確認。
+6. **記憶有容量意識**：長期記憶不可無限制增長。新增記憶時同時審視舊記憶，合併、精簡、淘汰過時內容。
+7. **Skills-first**：所有新功能以 skill 形式加入，操作邏輯封裝在 skill 中，CLAUDE.md 保持精簡。
 
 ---
 
@@ -93,7 +82,7 @@ groups/main/.claude/skills/
 ├── agentbrain-manage/            ← 自訂：AgentBrain 總管理（啟動載入、反思觸發）
 ├── memory-manage/                ← 自訂：記憶管理（日誌、context、長期記憶）
 ├── knowledge-manage/             ← 自訂：知識庫管理（建立/更新知識、MOC 維護）
-└── agentmind-manage/             ← 自訂：人格管理（演進提議、反思中的人格更新）
+└── agentmind-manage/             ← 自訂：人格管理（演進、反思中的人格更新）
 ```
 
 ---
@@ -104,7 +93,7 @@ groups/main/.claude/skills/
 
 #### `memory/user.md` — 使用者 Profile
 
-記錄使用者的身份、偏好、背景知識。Agent 在反思階段可以更新。
+記錄使用者的身份、偏好、背景知識。Agent 在反思階段自主更新。
 
 ```markdown
 ---
@@ -131,8 +120,8 @@ updated: 2026-02-11
 
 **讀寫規則**：
 - 讀取：每次 agent 啟動時自動載入
-- 寫入：**僅在反思階段**允許更新（防止單次對話的雜訊被過度捕捉）
-- 使用者可隨時手動編輯
+- 寫入：**僅在反思階段**自主更新（防止單次對話的雜訊被過度捕捉）
+- 使用者可隨時手動編輯（Obsidian 或直接修改檔案）
 
 #### `memory/tool.md` — 工具知識
 
@@ -163,7 +152,7 @@ updated: 2026-02-11
 **讀寫規則**：
 - 讀取：每次 agent 啟動時自動載入
 - 寫入：對話中遇到工具使用的新發現時即時更新（不需等反思）
-- 這是例外——工具知識是純客觀的經驗紀錄，不涉及主觀判斷
+- 工具知識是純客觀的經驗紀錄，不涉及主觀判斷，因此不受反思限制
 
 #### `memory/context.md` — 當前工作上下文
 
@@ -196,7 +185,7 @@ updated: 2026-02-11T14:30:00
 
 #### `memory/memory.md` — 長期記憶
 
-從每日日誌中固化的重要知識。反思階段整理。
+從每日日誌中固化的重要知識。反思階段整理，有容量上限意識。
 
 ```markdown
 ---
@@ -208,7 +197,7 @@ updated: 2026-02-11
 
 ## 重要事實
 - NanoClaw 從 WhatsApp 遷移到 Telegram (2026-02)
-- 使用者偏好提案 B 的平衡路線加上提案 C 的部分元素
+- AgentBrain vault 採用 Session + Context 混合模式
 
 ## 經驗教訓
 - Container 內 IPv6 不穩定，Telegram API 需強制 IPv4
@@ -222,6 +211,11 @@ updated: 2026-02-11
 **讀寫規則**：
 - 讀取：每次 agent 啟動時自動載入
 - 寫入：**僅在反思階段**，從 daily/ 日誌中提取重點固化
+- **容量控制**：memory.md 不可無限增長。每次反思新增記憶時，同時審視現有內容：
+  - 過時的事實 → 移除或更新
+  - 重複或相似的條目 → 合併精簡
+  - 已解決的「未解決問題」→ 移至「經驗教訓」或移除
+  - 目標：維持在 ~50-80 行以內，確保每條記憶都有當下的參考價值
 
 #### `memory/daily/YYYY-MM-DD.md` — 每日日誌
 
@@ -237,7 +231,7 @@ updated: 2026-02-11
 # 2026-02-11
 
 ## 14:30 — AgentBrain 設計討論
-**摘要**：討論了記憶與人格模組的架構設計，決定採用 B+C 混合模式。
+**摘要**：討論了記憶與人格模組的架構設計。
 **結論**：
 - AgentBrain 作為獨立 Obsidian vault
 - 人格演進限制在反思階段
@@ -284,7 +278,7 @@ updated: 2026-02-11
     │   ── 反思階段（定期觸發）──
     │
     └─ 反思更新：
-        ├─ memory.md — 從 daily/ 固化重點
+        ├─ memory.md — 從 daily/ 固化重點 + 審視舊記憶
         ├─ user.md — 更新使用者 profile（觀察到的穩定模式）
         ├─ knowledge/ — 整理知識庫（去重、補連結、更新 MOC）
         └─ agentmind/ — 人格演進（見 Part 3）
@@ -305,16 +299,16 @@ Agent 透過 `agentbrain-manage` skill 中的指引，在以下情況自主決�
 **建議 reset 的時機：**
 - 話題完全改變（例如從寫程式轉到討論行程）
 - 感覺 context 開始混亂或包含過多不相關的工具呼叫歷史
-- 使用者明確要求（「重新開始」「清除歷史」）
+- 使用者要求重新開始或清除歷史
 - 長時間未互動後回來（session 中的上下文已過時）
 
 **不建議 reset 的時機：**
 - 正在進行多步驟任務（tool call continuity 很重要）
 - 剛 reset 不久（避免頻繁 reset）
 
-**機制**：Agent 呼叫 `new_session` MCP tool（已在提案 B 中定義），host 端清除 session record，下次 invocation 自動建立新 session。
+**機制**：Agent 呼叫 `new_session` MCP tool，host 端收到 IPC 後清除 session record，下次 invocation 自動建立新 session。
 
-**使用者也可觸發**：使用者在 Telegram 中說「/reset」或類似指令，host 端直接清除 session。
+**使用者觸發方式**：使用者在 Telegram 中說「重新開始」「reset」等，agent 判斷意圖後呼叫 `new_session` MCP tool 執行 reset。不需要 host 端的特殊指令處理——所有 reset 都統一經由 agent 的 MCP tool 完成。
 
 #### 與記憶的關係
 
@@ -380,14 +374,22 @@ updated: 2026-02-11
 
 | 檔案 | 何時讀 | 何時寫 | 限制 |
 |------|--------|--------|------|
-| user.md | 啟動時 | 反思階段 | 僅反思時更新 |
+| user.md | 啟動時 | 反思階段 | 僅反思時更新，agent 自主決定 |
 | tool.md | 啟動時 | 即時 | 工具經驗即時記錄 |
 | context.md | 啟動時 | 對話結束 | 每次結束時更新 |
-| memory.md | 啟動時 | 反思階段 | 僅反思時固化 |
+| memory.md | 啟動時 | 反思階段 | 僅反思時固化，同時審視舊記憶 |
 | daily/ | 啟動時（今天+昨天） | 對話結束 | Append-only |
 | knowledge/ | 按需搜尋 | 即時 | 搜尋後建立/更新 |
-| soul.md | 啟動時 | 反思階段 | 僅反思時，需使用者確認 |
-| identity.md | 啟動時 | 反思階段 | 僅反思時，需使用者確認 |
+| soul.md | 啟動時 | 反思階段 | 僅反思時，immutable 段落不可修改 |
+| identity.md | 啟動時 | 反思階段 | 僅反思時，agent 自主決定 |
+
+## 長期記憶容量控制
+
+memory.md 不可無限增長。每次反思新增記憶時，同時審視現有內容：
+- 過時的事實 → 移除或更新
+- 重複或相似的條目 → 合併精簡
+- 已解決的問題 → 轉為經驗教訓或移除
+- 目標：維持在 ~50-80 行以內
 ```
 
 ---
@@ -536,7 +538,7 @@ Agent 使用現有的 Read、Glob、Grep 工具即可完成搜尋，不需要額
 
 ### 3.1 `agentmind/soul.md` — 行為哲學
 
-定義 agent「是誰」——核心價值觀和行為準則。借鑑 OpenClaw 的 SOUL.md 設計：用價值觀而非規則驅動行為，包含正面定義和負面定義（反模式）。
+定義 agent「是誰」——核心價值觀和行為準則。用價值觀而非規則驅動行為，包含正面定義和負面定義（反模式）。
 
 ```markdown
 ---
@@ -584,11 +586,11 @@ immutable:
 **讀寫規則**：
 - 啟動時自動載入，指導 agent 的所有行為
 - `immutable` 欄位列出的段落，agent **永遠不得修改**（由使用者手動維護）
-- 其他段落（如「思維模式」）可在反思階段由 agent 提議修改，需使用者確認
+- 其他段落（如「思維模式」「行為邊界」）可在反思階段由 agent 自主更新，並記錄到 evolution/
 
 ### 3.2 `agentmind/identity.md` — 對外形象
 
-與 soul.md 分離：一個 agent 可以有嚴謹的靈魂但輕鬆的對外風格。
+與 soul.md 分離：一個 agent 可以有嚴謹的靈魂但輕鬆的對外風格。內在行為邏輯和外在表現風格可以獨立調整。
 
 ```markdown
 ---
@@ -619,13 +621,15 @@ Cal
 
 **讀寫規則**：
 - 啟動時自動載入
-- 反思階段可由 agent 提議調整，需使用者確認
+- 反思階段可由 agent 自主調整，並記錄到 evolution/
 
 ### 3.3 人格演進機制
 
 #### 核心限制：只在反思階段演進
 
 人格演進不會在普通對話中發生。這防止 agent 基於單次對話的特殊情況過度調整自己。
+
+演進由 agent 自主完成，不需要使用者確認——使用者透過 Obsidian 或直接編輯檔案來監督和介入。evolution/ 記錄提供完整的演進歷史，使用者可隨時回滾。
 
 **演進流程**：
 
@@ -643,24 +647,18 @@ Cal
         ├─ 識別穩定的行為模式（出現 3 次以上）
         │
         ├─ 如果模式涉及使用者偏好：
-        │   └─ 提議更新 user.md
-        │       ├─ 透過 send_message 向使用者說明觀察和建議
-        │       ├─ 使用者同意 → 更新 user.md + 記錄到 evolution/
-        │       └─ 使用者拒絕 → 記錄在 daily log，不修改
+        │   └─ 直接更新 user.md + 記錄到 evolution/
         │
         ├─ 如果模式涉及 agent 自身行為：
-        │   └─ 提議更新 soul.md 或 identity.md
-        │       ├─ 檢查是否涉及 immutable 段落 → 不修改，告知使用者
-        │       ├─ 透過 send_message 向使用者說明觀察和建議
-        │       ├─ 使用者同意 → 更新 + 記錄到 evolution/
-        │       └─ 使用者拒絕 → 記錄在 daily log，不修改
+        │   ├─ 檢查是否涉及 immutable 段落 → 不修改，記錄觀察
+        │   └─ 非 immutable 段落 → 直接更新 soul.md 或 identity.md + 記錄到 evolution/
         │
-        └─ 記錄本次反思結果到 daily log
+        └─ 在反思摘要中列出本次所有演進修改
 ```
 
 #### `agentmind/evolution/` — 演進記錄
 
-每次人格或使用者 profile 修改都留下記錄：
+每次人格或使用者 profile 修改都留下記錄，作為審計軌跡和回滾依據：
 
 ```markdown
 ---
@@ -668,7 +666,6 @@ type: evolution
 target: user.md
 section: 溝通習慣
 created: 2026-02-11
-approved: true
 ---
 
 # 使用者偏好精簡回覆
@@ -723,14 +720,21 @@ approved: true
     └─ 報告知識庫統計（各類型數量、新增/更新數）
 ```
 
-#### Step 3：長期記憶固化
+#### Step 3：長期記憶固化與整理
 
 ```
 比較 daily/ 中的重點和 memory.md 的現有內容
     │
     ├─ 新的重要事實 → 加入 memory.md
     ├─ 已有內容的更新 → 修改 memory.md 對應段落
-    └─ 過時的資訊 → 標記或移除
+    ├─ 過時的資訊 → 移除
+    ├─ 重複或相似的條目 → 合併精簡
+    ├─ 已解決的「未解決問題」→ 轉為「經驗教訓」或移除
+    │
+    └─ 容量檢查：memory.md 超過 ~80 行時
+        ├─ 優先移除最久未更新且未被引用的條目
+        ├─ 合併可歸納的相關條目
+        └─ 將細節型記憶下沉到 knowledge/ 筆記（僅保留摘要在 memory.md）
 ```
 
 #### Step 4：人格演進（反思限定）
@@ -740,8 +744,10 @@ approved: true
     │
     ├─ 識別穩定模式（>= 3 次）
     ├─ 判斷是否需要修改 user.md / soul.md / identity.md
-    ├─ 如需修改 → 向使用者提議（send_message）
-    └─ 記錄演進結果
+    ├─ 如需修改：
+    │   ├─ 檢查 immutable 段落 → 不修改，記錄觀察
+    │   └─ 非 immutable → 直接更新 + 記錄到 evolution/
+    └─ 在反思摘要中列出所有演進修改
 ```
 
 #### Step 5：反思摘要
@@ -750,11 +756,12 @@ approved: true
 
 ```
 反思完成：
-- 固化了 3 項長期記憶
+- 固化了 3 項長期記憶，精簡了 2 項舊記憶
 - 建立了 1 篇新知識筆記 [[Telegram Bot API 限制]]
 - 更新了 2 篇知識筆記
-- 提議更新 user.md（等待確認）
+- 更新了 user.md：新增「偏好精簡回覆」
 - 知識庫統計：42 篇知識筆記、5 個 MOC、12 篇 daily log
+- memory.md 容量：52/80 行
 ```
 
 ---
@@ -793,12 +800,13 @@ approved: true
 - 定義 daily log 的寫入格式和時機
 - 定義 context.md 的更新規範
 - 定義 memory.md 的固化標準（什麼值得從 daily 提升到 memory）
+- 定義 memory.md 的容量控制規則（新增時審視舊內容）
 - 定義 tool.md 的即時更新規範
 - 提供記憶品質維護指引（去重、精簡、保持結構化）
 
 **觸發方式**：
 - 對話結束時自動觸發（寫日誌、更新 context）
-- 反思階段觸發（固化長期記憶）
+- 反思階段觸發（固化長期記憶、容量控制）
 
 ### `knowledge-manage/` — 知識庫管理
 
@@ -818,9 +826,8 @@ approved: true
 **職責**：
 - 定義 soul.md 和 identity.md 的修改規範
 - 定義 immutable 段落的保護機制
-- 定義演進提議的格式和流程
-- 定義 evolution/ 記錄的寫入規範
-- 明確限制：演進只在反思階段發生
+- 定義演進記錄（evolution/）的寫入規範
+- 明確限制：演進只在反思階段發生，agent 自主決定
 
 **觸發方式**：
 - 反思階段的 Step 4 觸發
@@ -836,26 +843,59 @@ approved: true
 |------|------|------|
 | `src/container-runner.ts` | 新增 mount | AgentBrain/ → /workspace/brain |
 | `src/index.ts` | 處理 new_session IPC | Agent reset session 時清除 session record |
-| `src/index.ts` | 處理 /reset 指令 | 使用者手動 reset session |
 | `container/agent-runner/src/index.ts` | 載入 core memory | 啟動時讀取 AgentBrain 記憶注入 prompt prefix |
 | `container/agent-runner/src/ipc-mcp.ts` | 新增 new_session tool | Agent 可以請求 reset session |
 
-### Agent Runner Memory Loading
+### Agent Runner Memory Loading 與 Prompt Cache
 
-Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序：
+Container agent 啟動時，在 prompt 之前注入 core memory。
+
+#### Prompt Cache 機制
+
+透過環境變數 `ENABLE_PROMPT_CACHE=true` 啟用 prompt cache。啟用後，prompt 的組成順序依照**變動頻率由低到高**排列，讓不易變動的部分能被 Anthropic API 的 prompt caching 機制快取：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Cacheable Zone（不易變動，適合快取）                       │
+│                                                         │
+│  1. CLAUDE.md               ← 幾乎不變                  │
+│  2. Skills                  ← 幾乎不變                  │
+│  3. soul.md                 ← 極少變動（immutable 段落）  │
+│  4. identity.md             ← 極少變動                  │
+│  5. user.md                 ← 反思時才變（低頻）          │
+│  6. tool.md                 ← 偶爾變動（低頻）            │
+│  7. memory.md               ← 反思時才變（低頻）          │
+│                                                         │
+│  ── cache breakpoint ──                                 │
+│                                                         │
+│  Non-cacheable Zone（頻繁變動）                           │
+│                                                         │
+│  8. context.md              ← 每次對話可能更新            │
+│  9. daily log（今天+昨天）   ← 每次對話 append            │
+│  10. Session transcript     ← 每次對話增長               │
+│  11. 使用者訊息（prompt）    ← 每次不同                  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+**實作方式**：Agent Runner 將 1-7 的內容合併為 `systemPrompt` 的前段（或使用 Agent SDK 的 cache control 機制），8-11 作為 prompt 的後段。具體實作取決於 Agent SDK 對 prompt caching 的支援方式。
+
+**未啟用時**：所有內容按原順序作為 prompt prefix 注入，不做 cache 分段處理。
+
+#### 讀取順序
 
 ```
 /workspace/brain/agentmind/soul.md       ← 我是誰
 /workspace/brain/agentmind/identity.md   ← 我的形象
 /workspace/brain/memory/user.md          ← 使用者是誰
 /workspace/brain/memory/tool.md          ← 工具知識
-/workspace/brain/memory/context.md       ← 現在在做什麼
 /workspace/brain/memory/memory.md        ← 長期記憶
+/workspace/brain/memory/context.md       ← 現在在做什麼
 /workspace/brain/memory/daily/今天.md    ← 今天的日誌
 /workspace/brain/memory/daily/昨天.md    ← 昨天的日誌
 ```
 
-以 XML tag 包裝後作為 prompt prefix 注入。Agent 也可以在對話中自行 Read 更多檔案。
+以 XML tag 包裝後注入。Agent 也可以在對話中自行 Read 更多檔案。
 
 ### CLAUDE.md 的角色
 
@@ -871,28 +911,28 @@ Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序�
 
 ## Context 預算估算
 
-| 來源 | Token 數 | 載入時機 | 備註 |
-|------|---------|---------|------|
-| CLAUDE.md | ~1.5-2K | 每次（Agent SDK） | 精簡版 |
-| Skills（5 個） | ~3-5K | 每次（Agent SDK 自動） | 按觸發條件選擇性載入 |
-| soul.md | ~500-800 | 每次（prompt prefix） | 穩定 |
-| identity.md | ~200-400 | 每次（prompt prefix） | 穩定 |
-| user.md | ~300-500 | 每次（prompt prefix） | 緩慢增長 |
-| tool.md | ~300-500 | 每次（prompt prefix） | 緩慢增長 |
-| context.md | ~300-800 | 每次（prompt prefix） | Agent 維護 |
-| memory.md | ~500-1K | 每次（prompt prefix） | 反思時維護 |
-| daily log (今天+昨天) | ~500-1.5K | 每次（prompt prefix） | 每天重置 |
-| **自動載入小計** | **~7-12K** | | **固定且可預測** |
-| Session transcript | 10K-50K | Session resume | **有上限（agent 管理 reset）** |
-| 知識庫搜尋結果 | 0-3K | 按需 | Agent 主動搜尋 |
-| **總計** | **~17-65K** | | **可控** |
+| 來源 | Token 數 | 載入時機 | 變動頻率 | 可快取 |
+|------|---------|---------|---------|--------|
+| CLAUDE.md | ~1.5-2K | 每次（Agent SDK） | 極低 | Yes |
+| Skills（5 個） | ~3-5K | 每次（Agent SDK 自動） | 極低 | Yes |
+| soul.md | ~500-800 | 每次（prompt prefix） | 極低 | Yes |
+| identity.md | ~200-400 | 每次（prompt prefix） | 極低 | Yes |
+| user.md | ~300-500 | 每次（prompt prefix） | 低（反思） | Yes |
+| tool.md | ~300-500 | 每次（prompt prefix） | 低 | Yes |
+| memory.md | ~500-1K | 每次（prompt prefix） | 低（反思） | Yes |
+| **可快取小計** | **~6.5-10K** | | | |
+| context.md | ~300-800 | 每次（prompt prefix） | 中（每次對話） | No |
+| daily log (今天+昨天) | ~500-1.5K | 每次（prompt prefix） | 高（每次對話） | No |
+| Session transcript | 10K-50K | Session resume | 高（每次對話） | No |
+| 知識庫搜尋結果 | 0-3K | 按需 | 每次不同 | No |
+| **不可快取小計** | **~11-55K** | | | |
+| **總計** | **~17-65K** | | | |
 
 **與現狀比較**：
 - 現在：15-210K+（session 無限膨脹）
 - 本方案：17-65K（session 有 agent 管理的 reset，記憶固定開銷 7-12K）
-- 純提案 C（無 session）：8-16K
 
-本方案在功能（保留 tool call continuity）和成本（可控 context）之間取得平衡。
+**Prompt cache 效益**：啟用後，~6.5-10K 的穩定內容可快取，僅在首次請求時計費。後續請求的可快取部分以 1/10 價格計費（Anthropic prompt caching 定價）。
 
 ---
 
@@ -908,7 +948,7 @@ Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序�
 4. 寫入人格檔案（soul.md, identity.md）
 5. 更新 `groups/main/CLAUDE.md` 指向 AgentBrain
 
-此時 agent 已經可以透過 Read/Write 工具存取 AgentBrain（因為 `groups/main/` 的父目錄——專案根目錄——已 mount 在 `/workspace/project`）。但尚未有專門的 mount 和 prompt prefix 注入。
+此時 agent 已經可以透過 Read/Write 工具存取 AgentBrain（因為專案根目錄已 mount 在 `/workspace/project`）。但尚未有專門的 mount 和 prompt prefix 注入。
 
 ### Phase 1：Container 整合（記憶自動載入）
 
@@ -929,21 +969,37 @@ Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序�
 
 1. `container/agent-runner/src/ipc-mcp.ts`：新增 `new_session` MCP tool
 2. `src/index.ts`：處理 new_session IPC 事件
-3. `src/index.ts`：處理使用者 /reset 指令
-4. 在 `agentbrain-manage` skill 中加入 session reset 判斷指引
+3. 在 `agentbrain-manage` skill 中加入 session reset 判斷指引
 
 ### Phase 4：反思機制
 
 1. 建立反思 prompt 模板
 2. 設定定期反思的 scheduled task
-3. 在 `memory-manage` skill 中加入反思步驟（日誌固化、知識維護）
+3. 在 `memory-manage` skill 中加入反思步驟（日誌固化、記憶容量控制、知識維護）
 
 ### Phase 5：人格演進
 
 1. 建立 `agentmind-manage` skill（演進規範）
 2. 建立 `agentmind/evolution/` 目錄
 3. 在反思流程中加入 Step 4（人格演進）
-4. 測試演進提議和確認流程
+4. 測試自主演進流程
+
+### Phase 6：Prompt Cache 優化
+
+1. 新增 `ENABLE_PROMPT_CACHE` 環境變數
+2. `container/agent-runner/src/index.ts`：依變動頻率排列 prompt 組成
+3. 實作 cache breakpoint 分段邏輯
+4. 驗證快取命中率和成本節省
+
+---
+
+## 環境變數
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `ENABLE_PROMPT_CACHE` | `false` | 啟用 prompt cache，將低變動內容放在 prompt 前段以利快取 |
+
+（其餘環境變數不變，見專案 CLAUDE.md。）
 
 ---
 
@@ -952,12 +1008,14 @@ Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序�
 | 風險 | 緩解方式 |
 |------|---------|
 | Agent 不遵循記憶寫入規範 | Skills 提供明確指引；index.md 定義規範；反覆測試調校 |
-| 記憶檔案品質下降 | 反思階段的知識維護步驟；memory.md 由反思而非即時產生 |
-| 人格漂移過快 | 只在反思階段演進；immutable 保護；evolution/ 記錄提供回滾依據 |
-| Context 仍然過大 | Agent 可 reset session；使用者可 /reset；反思清理過時的 context |
+| 記憶檔案品質下降 | 反思階段的品質維護步驟；memory.md 由反思而非即時產生 |
+| 人格漂移過快 | 只在反思階段演進；immutable 保護；evolution/ 記錄提供回滾依據；使用者可隨時透過 Obsidian 檢視和修正 |
+| 長期記憶膨脹 | memory.md 容量控制（~50-80 行）；反思時強制審視舊記憶；細節下沉到 knowledge/ |
+| Context 仍然過大 | Agent 可 reset session；反思清理過時的 context |
 | 知識庫膨脹 | MOC 組織；反思階段的合併去重；tag 體系便於搜尋 |
 | Daily log 累積過多 | 反思固化重點到 memory.md 後，歷史日誌主要供考古用；考慮 30 天後歸檔 |
 | Skills 太多導致 context 開銷 | 使用 `disable-model-invocation` 和條件觸發控制載入 |
+| Prompt cache 失效 | 僅影響成本，不影響功能；cache 為可選優化（env 開關控制） |
 
 ---
 
@@ -973,7 +1031,7 @@ Container agent 啟動時，在 prompt 之前注入 core memory。讀取順序�
 
 ### 人格檔案初始版本
 
-soul.md 和 identity.md 應由使用者撰寫初始版本（或與 agent 協作建立，類似 OpenClaw 的 Bootstrap 儀式）。提案中的範例可作為起點。
+soul.md 和 identity.md 應由使用者撰寫初始版本（或與 agent 協作建立：agent 在首次對話中詢問使用者關於偏好和期望，然後共同建立人格定義）。本文件中的範例可作為起點。
 
 ### knowledge/ 初始內容
 
