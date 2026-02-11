@@ -7,11 +7,13 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENTBRAIN_DIR,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  TIMEZONE,
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -62,6 +64,14 @@ function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
   mounts.push({
     hostPath: path.join(GROUPS_DIR, config.folder),
     containerPath: '/workspace/group',
+    readonly: false,
+  });
+
+  // AgentBrain vault
+  fs.mkdirSync(AGENTBRAIN_DIR, { recursive: true });
+  mounts.push({
+    hostPath: AGENTBRAIN_DIR,
+    containerPath: '/workspace/brain',
     readonly: false,
   });
 
@@ -128,6 +138,9 @@ function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Pass timezone so container's Date functions use the correct local time
+  args.push('-e', `TZ=${TIMEZONE}`);
 
   for (const mount of mounts) {
     if (mount.readonly) {

@@ -164,6 +164,8 @@ sessions (group_folder TEXT PK, session_id TEXT)
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 | `/single-user-mode` | Convert from multi-group to single-user architecture |
+| `/add-memory` | Add AgentBrain memory system (vault, knowledge, reflection) |
+| `/add-personality` | Add AgentBrain personality module (soul, identity, evolution) |
 
 ## Branch Strategy
 

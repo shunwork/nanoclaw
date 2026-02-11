@@ -4,7 +4,6 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  ASSISTANT_NAME,
   GROUPS_DIR,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
@@ -80,7 +79,7 @@ async function runTask(
       error = output.error || 'Unknown error';
     } else if (output.result) {
       if (output.result.outputType === 'message' && output.result.userMessage) {
-        await deps.sendMessage(task.chat_jid, `${ASSISTANT_NAME}: ${output.result.userMessage}`);
+        await deps.sendMessage(task.chat_jid, output.result.userMessage);
       }
       result = output.result.userMessage || output.result.internalLog || null;
     }

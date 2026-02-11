@@ -263,6 +263,28 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
           };
         }
       ),
+
+      tool(
+        'new_session',
+        'Reset the current conversation session. Use when the topic has completely changed, context feels cluttered, or the user requests a fresh start. All AgentBrain memory is preserved — only the session transcript is cleared. The reset takes effect on the next message.',
+        {},
+        async () => {
+          const data = {
+            type: 'new_session',
+            groupFolder,
+            timestamp: new Date().toISOString()
+          };
+
+          writeIpcFile(TASKS_DIR, data);
+
+          return {
+            content: [{
+              type: 'text',
+              text: 'Session reset requested. The new session will start on the next message.'
+            }]
+          };
+        }
+      ),
     ]
   });
 }

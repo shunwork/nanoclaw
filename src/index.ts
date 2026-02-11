@@ -132,7 +132,7 @@ async function processMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   if (response.outputType === 'message' && response.userMessage) {
-    await sendMessage(chatJid, `${ASSISTANT_NAME}: ${response.userMessage}`);
+    await sendMessage(chatJid, response.userMessage);
   }
 
   if (response.internalLog) {
@@ -240,7 +240,7 @@ function startIpcWatcher(): void {
           const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
           if (data.type === 'message' && data.text) {
             const targetJid = data.chatJid || OWNER_CHAT_JID;
-            await sendMessage(targetJid, `${ASSISTANT_NAME}: ${data.text}`);
+            await sendMessage(targetJid, data.text);
             logger.info({ chatJid: targetJid }, 'IPC message sent');
           }
           fs.unlinkSync(filePath);
@@ -384,6 +384,12 @@ async function processTaskIpc(
           logger.info({ taskId: data.taskId }, 'Task cancelled via IPC');
         }
       }
+      break;
+
+    case 'new_session':
+      sessionId = undefined;
+      setSession('main', '');
+      logger.info('Session reset via IPC');
       break;
 
     default:

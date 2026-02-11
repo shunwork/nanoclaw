@@ -225,6 +225,60 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   return lines.join('\n');
 }
 
+/**
+ * Load core memory files from AgentBrain vault for system prompt injection.
+ * Order follows prompt cache optimization: low-change files first.
+ */
+function loadCoreMemory(): string {
+  const brainDir = '/workspace/brain';
+
+  if (!fs.existsSync(brainDir)) {
+    log('AgentBrain vault not found at /workspace/brain');
+    return '';
+  }
+
+  const files = [
+    { path: 'agentmind/soul.md', tag: 'soul' },
+    { path: 'agentmind/identity.md', tag: 'identity' },
+    { path: 'memory/user.md', tag: 'user-profile' },
+    { path: 'memory/tool.md', tag: 'tool-knowledge' },
+    { path: 'memory/memory.md', tag: 'long-term-memory' },
+    { path: 'memory/context.md', tag: 'current-context' },
+  ];
+
+  const sections: string[] = [];
+
+  for (const f of files) {
+    const fullPath = path.join(brainDir, f.path);
+    if (fs.existsSync(fullPath)) {
+      const content = fs.readFileSync(fullPath, 'utf-8').trim();
+      if (content) {
+        sections.push(`<${f.tag}>\n${content}\n</${f.tag}>`);
+      }
+    }
+  }
+
+  // Load daily logs: yesterday then today (chronological order)
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const dailyDir = path.join(brainDir, 'memory', 'daily');
+  for (const date of [yesterday, today]) {
+    const dateStr = date.toISOString().split('T')[0];
+    const logPath = path.join(dailyDir, `${dateStr}.md`);
+    if (fs.existsSync(logPath)) {
+      const content = fs.readFileSync(logPath, 'utf-8').trim();
+      if (content) {
+        sections.push(`<daily-log date="${dateStr}">\n${content}\n</daily-log>`);
+      }
+    }
+  }
+
+  if (sections.length === 0) return '';
+  return `<agentbrain>\n${sections.join('\n\n')}\n</agentbrain>`;
+}
+
 async function main(): Promise<void> {
   let input: ContainerInput;
 
@@ -256,6 +310,9 @@ async function main(): Promise<void> {
   }
 
   try {
+    const coreMemory = loadCoreMemory();
+    log(`Core memory loaded: ${coreMemory.length} chars`);
+
     log('Starting agent...');
 
     for await (const message of query({
@@ -264,7 +321,7 @@ async function main(): Promise<void> {
         model: 'claude-sonnet-4-5-20250929',
         cwd: '/workspace/group',
         resume: input.sessionId,
-        systemPrompt: undefined,
+        systemPrompt: coreMemory || undefined,
         allowedTools: [
           'Bash',
           'Read', 'Write', 'Edit', 'Glob', 'Grep',
