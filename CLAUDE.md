@@ -184,6 +184,8 @@ This is a fork of [gavrielc/nanoclaw](https://github.com/gavrielc/nanoclaw). Thr
 - Personal config changes (tokens, assistant name, language) only go on `feature/mysetting`
 - `feature/customization` should never contain `src/` code changes — only skill files
 
+**Security: Before committing or pushing `feature/mysetting` (or branches based on it), always review the diff for secrets, tokens, API keys, personal info, or hardcoded credentials. The repo is public.**
+
 ## Development
 
 Run commands directly — don't tell the user to run them.
