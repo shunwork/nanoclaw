@@ -13,7 +13,7 @@
 3. **Agent 全權管理**：AgentBrain vault 整體 mount 給 agent，agent 透過 skills 定義的規範自主讀寫，包括人格和使用者 profile 的演進。
 4. **人機共讀**：所有檔案可用 Obsidian 直接開啟瀏覽、編輯，使用者隨時可以介入。
 5. **演進有節制**：人格與使用者 profile 的演進只在反思階段發生，避免 agent 過度適應單次對話的雜訊。演進由 agent 自主完成，不需使用者確認。
-6. **記憶有容量意識**：長期記憶不可無限制增長。新增記憶時同時審視舊記憶，合併、精簡、淘汰過時內容。
+6. **所有檔案有容量意識**：Vault 中的每種檔案都有容量上限，防止任何單一檔案無限增長。反思階段負責整體容量管控——新增內容時同時審視舊內容，合併、精簡、淘汰過時資訊。時效性資料（daily log、evolution 記錄）超過保留期限後歸檔。
 7. **Skills-first**：所有新功能以 skill 形式加入，操作邏輯封裝在 skill 中，CLAUDE.md 保持精簡。
 
 ---
@@ -44,16 +44,18 @@ AgentBrain/                       ← 獨立 Obsidian vault，mount 給 agent �
 ├── agentmind/                    ← Agent 人格
 │   ├── soul.md                   ← 行為哲學、核心價值、反模式
 │   ├── identity.md               ← 對外形象、溝通風格、名稱
-│   └── evolution/                ← 人格演進記錄
-│       └── YYYY-MM-DD-<topic>.md
+│   └── evolution/                ← 人格演進記錄（保留 60 天）
+│       ├── YYYY-MM-DD-<topic>.md
+│       └── archive/              ← 超過 60 天的記錄歸檔
 │
 ├── memory/                       ← Agent 記憶
 │   ├── user.md                   ← 使用者 profile：偏好、背景、習慣
 │   ├── tool.md                   ← 工具知識：使用經驗、踩過的坑、最佳實踐
 │   ├── context.md                ← 當前工作上下文：進行中/準備進行的事項
 │   ├── memory.md                 ← 長期記憶：從每日日誌固化的重要知識
-│   └── daily/                    ← 每日日誌（append-only）
-│       └── YYYY-MM-DD.md
+│   └── daily/                    ← 每日日誌（append-only，保留 60 天）
+│       ├── YYYY-MM-DD.md
+│       └── archive/              ← 超過 60 天的日誌歸檔
 │
 ├── knowledge/                    ← 知識庫
 │   ├── {topic}.md                ← 主題筆記
@@ -215,7 +217,7 @@ updated: 2026-02-11
   - 過時的事實 → 移除或更新
   - 重複或相似的條目 → 合併精簡
   - 已解決的「未解決問題」→ 移至「經驗教訓」或移除
-  - 目標：維持在 ~50-80 行以內，確保每條記憶都有當下的參考價值
+  - 目標：維持在 ~150-200 行以內，確保每條記憶都有當下的參考價值
 
 #### `memory/daily/YYYY-MM-DD.md` — 每日日誌
 
@@ -251,6 +253,7 @@ updated: 2026-02-11
 - 寫入：每次對話結束時 append 摘要條目（即時寫入）
 - Append-only，不修改已寫入的條目
 - 反思階段會讀取近 7 天日誌來固化重點到 memory.md
+- **保留期限**：60 天。超過 60 天的日誌在反思時移至 `daily/archive/`。歸檔日誌保留在 vault 中可用 Obsidian 瀏覽，但 agent 啟動時不載入、反思時不掃描
 
 ### 1.2 記憶生命週期
 
@@ -316,10 +319,10 @@ Session reset 不影響 AgentBrain 中的任何檔案。Agent 的長期記憶、
 
 ```
 Reset 前：
-  Session transcript (10-50K tokens) + AgentBrain memory (5-8K tokens)
+  Session transcript (10-50K tokens) + AgentBrain memory (8-14K tokens)
 
 Reset 後：
-  新 session (0 tokens) + AgentBrain memory (5-8K tokens，不變)
+  新 session (0 tokens) + AgentBrain memory (8-14K tokens，不變)
 ```
 
 這確保了 reset 是安全的——agent 不會「失憶」，只是「清醒過來重新開始」。
@@ -383,13 +386,40 @@ updated: 2026-02-11
 | soul.md | 啟動時 | 反思階段 | 僅反思時，immutable 段落不可修改 |
 | identity.md | 啟動時 | 反思階段 | 僅反思時，agent 自主決定 |
 
-## 長期記憶容量控制
+## 容量控制
 
-memory.md 不可無限增長。每次反思新增記憶時，同時審視現有內容：
-- 過時的事實 → 移除或更新
-- 重複或相似的條目 → 合併精簡
-- 已解決的問題 → 轉為經驗教訓或移除
-- 目標：維持在 ~50-80 行以內
+Vault 中每種檔案都有容量上限和超限策略，在反思階段統一管控。
+
+### 容量上限表
+
+| 檔案 | 上限 | 超限策略 |
+|------|------|---------|
+| memory.md | ~150-200 行 | 合併精簡、淘汰過時條目、細節下沉到 knowledge/ |
+| user.md | ~60-80 行 | 合併相似偏好、精簡描述 |
+| tool.md | ~80-120 行 | 淘汰已失效的工具提示、合併同工具條目 |
+| context.md | ~30-50 行 | 清除已完成事項、合併相關待辦 |
+| daily/ 每日 | ~100-150 行/檔 | 壓縮摘要、省略低價值對話細節 |
+| knowledge/ 每篇 | ~300-400 行 | 拆分為子主題 + MOC 索引 |
+| moc_*.md | ~60-100 行 | 拆分為子 MOC |
+| soul.md | ~60-80 行 | 精簡表述，不該變長而是變準確 |
+| identity.md | ~40-60 行 | 同上 |
+| evolution/ 每篇 | ~30-50 行 | 控制單次演進範圍，過大則拆分 |
+
+### 保留期限
+
+| 檔案 | 保留期限 | 歸檔位置 |
+|------|---------|---------|
+| daily/ | 60 天 | daily/archive/ |
+| evolution/ | 60 天 | evolution/archive/ |
+
+歸檔在反思時自動執行。歸檔檔案不刪除，保留在 vault 中可用 Obsidian 瀏覽，但 agent 啟動時不載入、反思時不掃描。
+
+### 超限處理原則
+
+- **Core memory**（user/tool/memory/context）：反思時合併精簡，維持在上限內
+- **Knowledge/**：單篇超限 → 拆分子主題；整體不設硬限，靠 MOC + 反思去重管理
+- **Soul/Identity**：不該隨時間變長——應該是變*準確*
+- **時效性檔案**（daily/evolution）：超過保留期限 → 歸檔
 ```
 
 ---
@@ -532,6 +562,14 @@ Agent 搜尋知識庫的策略順序（由快到慢）：
 
 Agent 使用現有的 Read、Glob、Grep 工具即可完成搜尋，不需要額外的 MCP 搜尋工具。`obsidian-markdown` 和 `obsidian-bases` 官方 skills 提供 Obsidian 格式的規範指引。
 
+### 2.6 知識筆記容量
+
+單篇知識筆記上限 ~300-400 行。知識筆記是獨立的參考文件，需要足夠空間做完整記述——摘要、要點、範例、已知限制、相關連結。超過上限時拆分為子主題筆記，並建立或更新對應的 MOC 索引。
+
+MOC 索引上限 ~60-100 行。超過代表該主題已大到需要拆分為子 MOC（例如 `moc_nanoclaw.md` → `moc_nanoclaw-architecture.md` + `moc_nanoclaw-integrations.md`）。
+
+知識庫整體不設硬性數量上限——知識累積是 agent 的核心價值，不該被人為限制。靠 MOC + tag 體系 + 反思階段的去重合併維持品質。
+
 ---
 
 ## Part 3：人格模組 (AgentMind)
@@ -658,7 +696,7 @@ Cal
 
 #### `agentmind/evolution/` — 演進記錄
 
-每次人格或使用者 profile 修改都留下記錄，作為審計軌跡和回滾依據：
+每次人格或使用者 profile 修改都留下記錄，作為審計軌跡和回滾依據。每篇記錄 ~30-50 行（觀察+修改+原因），超過代表一次改太多，應拆分。保留 60 天，超過在反思時移至 `evolution/archive/`：
 
 ```markdown
 ---
@@ -717,6 +755,9 @@ created: 2026-02-11
     ├─ 檢查是否有主題超過 5 篇筆記但無 MOC → 建立 moc_*.md
     ├─ 檢查斷裂的 [[wiki-link]] → 修復或建立目標
     ├─ 檢查過時筆記（updated 超過 30 天且被頻繁引用）→ 標記需要更新
+    ├─ 檢查超過 ~300-400 行的筆記 → 拆分子主題 + 更新 MOC
+    ├─ 檢查超過 ~60-100 行的 MOC → 拆分子 MOC
+    ├─ 合併重複筆記
     └─ 報告知識庫統計（各類型數量、新增/更新數）
 ```
 
@@ -731,10 +772,15 @@ created: 2026-02-11
     ├─ 重複或相似的條目 → 合併精簡
     ├─ 已解決的「未解決問題」→ 轉為「經驗教訓」或移除
     │
-    └─ 容量檢查：memory.md 超過 ~80 行時
-        ├─ 優先移除最久未更新且未被引用的條目
-        ├─ 合併可歸納的相關條目
-        └─ 將細節型記憶下沉到 knowledge/ 筆記（僅保留摘要在 memory.md）
+    ├─ memory.md 容量檢查（上限 ~200 行）：
+    │   ├─ 優先移除最久未更新且未被引用的條目
+    │   ├─ 合併可歸納的相關條目
+    │   └─ 將細節型記憶下沉到 knowledge/ 筆記（僅保留摘要在 memory.md）
+    │
+    └─ 其他 core memory 容量檢查：
+        ├─ user.md 超過 ~80 行 → 合併相似偏好、精簡描述
+        ├─ tool.md 超過 ~120 行 → 淘汰已失效的工具提示
+        └─ context.md 超過 ~50 行 → 清除已完成事項
 ```
 
 #### Step 4：人格演進（反思限定）
@@ -750,7 +796,17 @@ created: 2026-02-11
     └─ 在反思摘要中列出所有演進修改
 ```
 
-#### Step 5：反思摘要
+#### Step 5：歸檔清理
+
+```
+檢查時效性檔案
+    │
+    ├─ daily/ 中超過 60 天的日誌 → 移至 daily/archive/
+    ├─ evolution/ 中超過 60 天的記錄 → 移至 evolution/archive/
+    └─ 報告歸檔數量
+```
+
+#### Step 6：反思摘要
 
 向使用者發送簡短的反思報告：
 
@@ -760,8 +816,9 @@ created: 2026-02-11
 - 建立了 1 篇新知識筆記 [[Telegram Bot API 限制]]
 - 更新了 2 篇知識筆記
 - 更新了 user.md：新增「偏好精簡回覆」
-- 知識庫統計：42 篇知識筆記、5 個 MOC、12 篇 daily log
-- memory.md 容量：52/80 行
+- 歸檔了 5 篇過期日誌、2 篇過期演進記錄
+- 容量：memory.md 98/200 行｜user.md 42/80 行｜tool.md 65/120 行
+- 知識庫統計：42 篇知識筆記、5 個 MOC
 ```
 
 ---
@@ -800,18 +857,20 @@ created: 2026-02-11
 - 定義 daily log 的寫入格式和時機
 - 定義 context.md 的更新規範
 - 定義 memory.md 的固化標準（什麼值得從 daily 提升到 memory）
-- 定義 memory.md 的容量控制規則（新增時審視舊內容）
+- 定義所有 core memory 檔案的容量上限和超限策略
 - 定義 tool.md 的即時更新規範
+- 定義 daily log 和 evolution 記錄的 60 天歸檔規則
 - 提供記憶品質維護指引（去重、精簡、保持結構化）
 
 **觸發方式**：
 - 對話結束時自動觸發（寫日誌、更新 context）
-- 反思階段觸發（固化長期記憶、容量控制）
+- 反思階段觸發（固化長期記憶、容量控制、歸檔清理）
 
 ### `knowledge-manage/` — 知識庫管理
 
 **職責**：
 - 定義知識筆記的建立規範（frontmatter、命名、tag）
+- 定義知識筆記和 MOC 的容量上限（~300-400 行/篇、~60-100 行/MOC）
 - 定義 MOC 的建立和維護規則
 - 定義 wiki-link 的使用慣例
 - 定義搜尋策略（搜尋順序、防重複）
@@ -911,28 +970,28 @@ Container agent 啟動時，在 prompt 之前注入 core memory。
 
 ## Context 預算估算
 
-| 來源 | Token 數 | 載入時機 | 變動頻率 | 可快取 |
-|------|---------|---------|---------|--------|
-| CLAUDE.md | ~1.5-2K | 每次（Agent SDK） | 極低 | Yes |
-| Skills（5 個） | ~3-5K | 每次（Agent SDK 自動） | 極低 | Yes |
-| soul.md | ~500-800 | 每次（prompt prefix） | 極低 | Yes |
-| identity.md | ~200-400 | 每次（prompt prefix） | 極低 | Yes |
-| user.md | ~300-500 | 每次（prompt prefix） | 低（反思） | Yes |
-| tool.md | ~300-500 | 每次（prompt prefix） | 低 | Yes |
-| memory.md | ~500-1K | 每次（prompt prefix） | 低（反思） | Yes |
-| **可快取小計** | **~6.5-10K** | | | |
-| context.md | ~300-800 | 每次（prompt prefix） | 中（每次對話） | No |
-| daily log (今天+昨天) | ~500-1.5K | 每次（prompt prefix） | 高（每次對話） | No |
-| Session transcript | 10K-50K | Session resume | 高（每次對話） | No |
-| 知識庫搜尋結果 | 0-3K | 按需 | 每次不同 | No |
-| **不可快取小計** | **~11-55K** | | | |
-| **總計** | **~17-65K** | | | |
+| 來源 | 容量上限 | Token 數 | 載入時機 | 變動頻率 | 可快取 |
+|------|---------|---------|---------|---------|--------|
+| CLAUDE.md | — | ~1.5-2K | 每次（Agent SDK） | 極低 | Yes |
+| Skills（5 個） | — | ~3-5K | 每次（Agent SDK 自動） | 極低 | Yes |
+| soul.md | ~60-80 行 | ~500-800 | 每次（prompt prefix） | 極低 | Yes |
+| identity.md | ~40-60 行 | ~200-400 | 每次（prompt prefix） | 極低 | Yes |
+| user.md | ~60-80 行 | ~400-700 | 每次（prompt prefix） | 低（反思） | Yes |
+| tool.md | ~80-120 行 | ~500-800 | 每次（prompt prefix） | 低 | Yes |
+| memory.md | ~150-200 行 | ~1-2K | 每次（prompt prefix） | 低（反思） | Yes |
+| **可快取小計** | | **~7-12K** | | | |
+| context.md | ~30-50 行 | ~200-500 | 每次（prompt prefix） | 中（每次對話） | No |
+| daily log (今天+昨天) | ~100-150 行/檔 | ~500-1.5K | 每次（prompt prefix） | 高（每次對話） | No |
+| Session transcript | — | 10K-50K | Session resume | 高（每次對話） | No |
+| 知識庫搜尋結果 | ~300-400 行/篇 | 0-3K | 按需 | 每次不同 | No |
+| **不可快取小計** | | **~11-55K** | | | |
+| **總計** | | **~18-67K** | | | |
 
 **與現狀比較**：
 - 現在：15-210K+（session 無限膨脹）
-- 本方案：17-65K（session 有 agent 管理的 reset，記憶固定開銷 7-12K）
+- 本方案：18-67K（session 有 agent 管理的 reset，記憶固定開銷 8-14K）
 
-**Prompt cache 效益**：啟用後，~6.5-10K 的穩定內容可快取，僅在首次請求時計費。後續請求的可快取部分以 1/10 價格計費（Anthropic prompt caching 定價）。
+**Prompt cache 效益**：啟用後，~7-12K 的穩定內容可快取，僅在首次請求時計費。後續請求的可快取部分以 1/10 價格計費（Anthropic prompt caching 定價）。
 
 ---
 
@@ -1010,10 +1069,10 @@ Container agent 啟動時，在 prompt 之前注入 core memory。
 | Agent 不遵循記憶寫入規範 | Skills 提供明確指引；index.md 定義規範；反覆測試調校 |
 | 記憶檔案品質下降 | 反思階段的品質維護步驟；memory.md 由反思而非即時產生 |
 | 人格漂移過快 | 只在反思階段演進；immutable 保護；evolution/ 記錄提供回滾依據；使用者可隨時透過 Obsidian 檢視和修正 |
-| 長期記憶膨脹 | memory.md 容量控制（~50-80 行）；反思時強制審視舊記憶；細節下沉到 knowledge/ |
+| 長期記憶膨脹 | memory.md 容量控制（~150-200 行）；反思時強制審視舊記憶；細節下沉到 knowledge/ |
 | Context 仍然過大 | Agent 可 reset session；反思清理過時的 context |
-| 知識庫膨脹 | MOC 組織；反思階段的合併去重；tag 體系便於搜尋 |
-| Daily log 累積過多 | 反思固化重點到 memory.md 後，歷史日誌主要供考古用；考慮 30 天後歸檔 |
+| 知識庫膨脹 | 單篇上限 ~300-400 行，超限拆分；MOC 組織；反思階段合併去重 |
+| Daily log 累積過多 | 反思固化重點到 memory.md 後，60 天後自動歸檔至 daily/archive/ |
 | Skills 太多導致 context 開銷 | 使用 `disable-model-invocation` 和條件觸發控制載入 |
 | Prompt cache 失效 | 僅影響成本，不影響功能；cache 為可選優化（env 開關控制） |
 
