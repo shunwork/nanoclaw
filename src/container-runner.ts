@@ -343,6 +343,17 @@ export async function runContainerAgent(
       fs.writeFileSync(logFile, logLines.join('\n'));
       logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
 
+      // Helper to append request/response details to log file (non-verbose only)
+      const appendInteractionLog = (sections: string[]) => {
+        if (!isVerbose) {
+          try {
+            fs.appendFileSync(logFile, '\n' + sections.join('\n') + '\n');
+          } catch {
+            // Non-critical — don't fail the response
+          }
+        }
+      };
+
       if (code !== 0) {
         logger.error(
           {
@@ -354,6 +365,15 @@ export async function runContainerAgent(
           },
           'Container exited with error',
         );
+
+        appendInteractionLog([
+          `=== User Request ===`,
+          input.prompt.slice(0, 2000),
+          ``,
+          `=== Error ===`,
+          `Container exited with code ${code}`,
+          stderr.slice(-500),
+        ]);
 
         resolve({
           status: 'error',
@@ -390,6 +410,22 @@ export async function runContainerAgent(
           'Container completed',
         );
 
+        // Append request/response to log file
+        const result = output.result;
+        const userMsg = result?.userMessage || '';
+        const internalLog = result?.internalLog || '';
+        appendInteractionLog([
+          `=== User Request ===`,
+          input.prompt.slice(0, 2000),
+          ``,
+          `=== Agent Response ===`,
+          `Output Type: ${result?.outputType || 'unknown'}`,
+          `User Message (${userMsg.length} chars):`,
+          userMsg.slice(0, 2000),
+          `Internal Log:`,
+          internalLog.slice(0, 500),
+        ]);
+
         resolve(output);
       } catch (err) {
         logger.error(
@@ -400,6 +436,14 @@ export async function runContainerAgent(
           },
           'Failed to parse container output',
         );
+
+        appendInteractionLog([
+          `=== User Request ===`,
+          input.prompt.slice(0, 2000),
+          ``,
+          `=== Parse Error ===`,
+          `${err instanceof Error ? err.message : String(err)}`,
+        ]);
 
         resolve({
           status: 'error',

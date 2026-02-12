@@ -127,6 +127,14 @@ async function processMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
+  logger.info({
+    outputType: response.outputType,
+    promptPreview: prompt.slice(0, 200).replace(/\n/g, ' '),
+    responsePreview: response.userMessage?.slice(0, 200)?.replace(/\n/g, ' '),
+    promptLength: prompt.length,
+    responseLength: response.userMessage?.length || 0,
+  }, 'Agent interaction');
+
   lastAgentTimestamp =
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
