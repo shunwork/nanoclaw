@@ -226,8 +226,9 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
 }
 
 /**
- * Load core memory files from AgentBrain vault for system prompt injection.
- * Order follows prompt cache optimization: low-change files first.
+ * Load stable core memory files from AgentBrain vault for system prompt injection.
+ * Only includes files that rarely change, optimizing for prompt cache hit rate.
+ * Volatile content (context.md, daily logs) is loaded separately via loadVolatileContext().
  */
 function loadCoreMemory(): string {
   const brainDir = '/workspace/brain';
@@ -243,7 +244,6 @@ function loadCoreMemory(): string {
     { path: 'memory/user.md', tag: 'user-profile' },
     { path: 'memory/tool.md', tag: 'tool-knowledge' },
     { path: 'memory/memory.md', tag: 'long-term-memory' },
-    { path: 'memory/context.md', tag: 'current-context' },
   ];
 
   const sections: string[] = [];
@@ -258,25 +258,58 @@ function loadCoreMemory(): string {
     }
   }
 
-  // Load daily logs: yesterday then today (chronological order)
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
+  if (sections.length === 0) return '';
+  return `<agentbrain>\n${sections.join('\n\n')}\n</agentbrain>`;
+}
 
-  const dailyDir = path.join(brainDir, 'memory', 'daily');
-  for (const date of [yesterday, today]) {
-    const dateStr = date.toISOString().split('T')[0];
-    const logPath = path.join(dailyDir, `${dateStr}.md`);
-    if (fs.existsSync(logPath)) {
-      const content = fs.readFileSync(logPath, 'utf-8').trim();
-      if (content) {
-        sections.push(`<daily-log date="${dateStr}">\n${content}\n</daily-log>`);
-      }
+/**
+ * Load volatile context (context.md + daily logs) for injection into the first
+ * user message of a new session. Not included in systemPrompt to keep it stable
+ * for prompt caching. On session resume, the agent can read these files via
+ * the Read tool if needed.
+ */
+function loadVolatileContext(): string {
+  const brainDir = '/workspace/brain';
+
+  if (!fs.existsSync(brainDir)) return '';
+
+  const parts: string[] = [];
+
+  // Current context
+  const contextPath = path.join(brainDir, 'memory', 'context.md');
+  if (fs.existsSync(contextPath)) {
+    const content = fs.readFileSync(contextPath, 'utf-8').trim();
+    if (content) {
+      parts.push(`<context>\n${content}\n</context>`);
     }
   }
 
-  if (sections.length === 0) return '';
-  return `<agentbrain>\n${sections.join('\n\n')}\n</agentbrain>`;
+  // Daily logs: yesterday then today (chronological order, separate tags)
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+  const dailyDir = path.join(brainDir, 'memory', 'daily');
+
+  const yesterdayPath = path.join(dailyDir, `${yesterdayStr}.md`);
+  if (fs.existsSync(yesterdayPath)) {
+    const content = fs.readFileSync(yesterdayPath, 'utf-8').trim();
+    if (content) {
+      parts.push(`<yesterday_notes date="${yesterdayStr}">\n${content}\n</yesterday_notes>`);
+    }
+  }
+
+  const todayPath = path.join(dailyDir, `${todayStr}.md`);
+  if (fs.existsSync(todayPath)) {
+    const content = fs.readFileSync(todayPath, 'utf-8').trim();
+    if (content) {
+      parts.push(`<today_notes date="${todayStr}">\n${content}\n</today_notes>`);
+    }
+  }
+
+  return parts.join('\n\n');
 }
 
 async function main(): Promise<void> {
@@ -307,6 +340,17 @@ async function main(): Promise<void> {
   let prompt = input.prompt;
   if (input.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${input.prompt}`;
+  }
+
+  // Inject volatile context (context.md + daily logs) only for new sessions.
+  // On resume, this data is already in the transcript from the first turn,
+  // and the agent can read updated files via the Read tool if needed.
+  if (!input.sessionId) {
+    const volatileContext = loadVolatileContext();
+    if (volatileContext) {
+      log(`Volatile context loaded: ${volatileContext.length} chars`);
+      prompt = `${volatileContext}\n\n${prompt}`;
+    }
   }
 
   try {
