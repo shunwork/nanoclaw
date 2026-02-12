@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_MODEL,
   AGENTBRAIN_DIR,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -141,6 +142,9 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
 
   // Pass timezone so container's Date functions use the correct local time
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass agent model selection into container
+  args.push('-e', `AGENT_MODEL=${AGENT_MODEL}`);
 
   for (const mount of mounts) {
     if (mount.readonly) {

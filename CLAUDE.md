@@ -100,7 +100,7 @@ docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md
 
 ## Container Agent Configuration
 
-The agent runs Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`) with these settings (in `container/agent-runner/src/index.ts`):
+The agent runs the model specified by `AGENT_MODEL` env var (default: `claude-sonnet-4-5-20250929`) with these settings (in `container/agent-runner/src/index.ts`):
 
 - **allowedTools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `mcp__nanoclaw__*`
 - **permissionMode**: `bypassPermissions` (sandboxed in Docker)
@@ -127,7 +127,7 @@ The agent runs Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`) with these setti
 - **Add skills**: Place `.md` files in `groups/main/.claude/skills/` — auto-loaded by Agent SDK.
 - **Add hooks**: Add to `hooks` object in `query()` options (`PreToolUse`, `PostToolUse`, `PreCompact`, `Notification`).
 - **Change instructions**: Edit `groups/main/CLAUDE.md` — no rebuild needed.
-- **Change model**: Edit the `model` field in `query()` options.
+- **Change model**: Set `AGENT_MODEL` in `.env` and restart — no rebuild needed.
 
 Note: `container/skills/agent-browser.md` is a reference file but is NOT auto-loaded by the Agent SDK (it's not under `.claude/skills/`). The agent-browser instructions are currently embedded in `groups/main/CLAUDE.md`.
 
@@ -149,6 +149,7 @@ sessions (group_folder TEXT PK, session_id TEXT)
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram Bot API token |
 | `OWNER_CHAT_JID` | Yes | — | Owner's Telegram chat ID |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Yes* | — | Auth for Agent SDK (*or `ANTHROPIC_API_KEY`) |
+| `AGENT_MODEL` | No | `claude-sonnet-4-5-20250929` | Claude model for agents |
 | `ASSISTANT_NAME` | No | `Cal` | Bot display name in messages |
 | `CONTAINER_IMAGE` | No | `nanoclaw-agent:latest` | Docker image name |
 | `CONTAINER_TIMEOUT` | No | `300000` | Container timeout (ms) |
