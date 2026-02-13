@@ -176,16 +176,29 @@ This is a fork of [gavrielc/nanoclaw](https://github.com/gavrielc/nanoclaw). Thr
 |--------|---------|-------------|
 | `main` | Track upstream. Never commit custom changes here. | `upstream/main` |
 | `feature/customization` | Shareable skills (`.claude/skills/` only). PR-able back to upstream. | `main` |
-| `feature/mysetting` | Personal deployment. All customizations (Telegram, Docker, model, env, preferences). | `main` |
+| `feature/myclaw` | Personal deployment. All customizations (Telegram, Docker, model, env, preferences). | `main`, `feature/customization` |
 
 **Rules:**
 - Sync upstream: `git fetch upstream && git checkout main && git merge upstream/main`
-- After syncing main, rebase both branches: `git checkout feature/mysetting && git rebase main`
-- New skills go on `feature/customization` first, then merge into `feature/mysetting`
-- Personal config changes (tokens, assistant name, language) only go on `feature/mysetting`
+- After syncing main, rebase both branches: `git checkout feature/myclaw && git rebase main`
 - `feature/customization` should never contain `src/` code changes — only skill files
+- Personal config changes (tokens, assistant name, language) only go on `feature/myclaw`
 
-**Security: Before committing or pushing `feature/mysetting` (or branches based on it), always review the diff for secrets, tokens, API keys, personal info, or hardcoded credentials. The repo is public.**
+**Adding new features (skill → code workflow):**
+1. Create the skill file on `feature/customization` and commit
+2. Switch to `feature/myclaw`, merge from `feature/customization` with `--no-ff` to preserve merge history
+3. Apply the code changes (`src/`, `container/`, `CLAUDE.md`, etc.) on `feature/myclaw` and commit
+
+```bash
+# Example: adding a new integration
+git checkout feature/customization
+# ... create .claude/skills/add-foo/SKILL.md, commit ...
+git checkout feature/myclaw
+git merge feature/customization --no-ff -m "Merge skill: add-foo from feature/customization"
+# ... apply code changes, commit ...
+```
+
+**Security: Before committing or pushing `feature/myclaw` (or branches based on it), always review the diff for secrets, tokens, API keys, personal info, or hardcoded credentials. The repo is public.**
 
 ## Development
 
