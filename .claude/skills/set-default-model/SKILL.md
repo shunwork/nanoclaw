@@ -9,63 +9,61 @@ Change the Claude model that NanoClaw agents use by default.
 
 ## Available Models
 
-Ask the user which model they want:
+Ask the user which model they want using `AskUserQuestion`:
 
-> Which Claude model should agents use by default?
->
-> **Option 1: Claude Sonnet 4.5** (Recommended)
-> - Best balance of speed and capability
-> - Model ID: `claude-sonnet-4-5-20250929`
->
-> **Option 2: Claude Opus 4.6**
-> - Most capable, slower and more expensive
-> - Model ID: `claude-opus-4-6`
->
-> **Option 3: Claude Haiku 4.5**
-> - Fastest and cheapest, less capable
-> - Model ID: `claude-haiku-4-5-20251001`
-
-Store their choice for the step below.
+- **Claude Sonnet 4.5** (Recommended) — Best balance of speed and capability. Model ID: `claude-sonnet-4-5-20250929`
+- **Claude Opus 4.6** — Most capable, slower and more expensive. Model ID: `claude-opus-4-6`
+- **Claude Haiku 4.5** — Fastest and cheapest, less capable. Model ID: `claude-haiku-4-5-20251001`
 
 ## Implementation
 
-Read `container/agent-runner/src/index.ts` and find the `query()` call (around line 270). Add or update the `model` property in the `options` object:
+The model is controlled by the `AGENT_MODEL` environment variable, which the host passes into the container at runtime.
 
-```typescript
-for await (const message of query({
-  prompt,
-  options: {
-    model: 'MODEL_ID_HERE',  // Add or update this line
-    cwd: '/workspace/group',
-    resume: input.sessionId,
-    // ... rest of options
-  }
-})) {
+### If the code changes are already applied
+
+Just set the env var in `.env`:
+
+```
+AGENT_MODEL=claude-sonnet-4-5-20250929
 ```
 
-Replace `MODEL_ID_HERE` with the model ID from the user's choice.
-
-If no `model` property exists, the agent uses whatever model is the Claude Code default. Adding it explicitly locks the model.
-
-## Rebuild Container
-
-The agent runner runs inside the container, so you must rebuild:
-
-```bash
-cd container && ./build.sh
-```
-
-Wait for the build to complete, then restart the service:
+Then restart the service:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
-If using `npm run dev` instead of launchd, just restart the dev server.
+No container rebuild needed — the env var is passed through at runtime.
+
+### If the code changes are NOT applied yet
+
+Three files need changes:
+
+1. **`src/config.ts`** — Add the env var:
+   ```typescript
+   export const AGENT_MODEL = process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929';
+   ```
+
+2. **`src/container-runner.ts`** — Import `AGENT_MODEL` from config, then pass it to the container in `buildContainerArgs()`:
+   ```typescript
+   args.push('-e', `AGENT_MODEL=${AGENT_MODEL}`);
+   ```
+
+3. **`container/agent-runner/src/index.ts`** — Read from env in the `query()` call:
+   ```typescript
+   model: process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929',
+   ```
+
+Then build and rebuild:
+
+```bash
+npm run build
+cd container && npm run build && cd .. && ./container/build.sh
+```
 
 ## Verify
 
-Check the logs after sending a test message:
+After restarting, send a test message and check logs:
 
 ```bash
 tail -f logs/nanoclaw.log
@@ -75,4 +73,4 @@ The agent should complete successfully. Model choice affects response speed and 
 
 ## Reverting to Default
 
-To use the Claude Code default model (whatever is current), simply remove the `model` line from the `query()` options and rebuild the container.
+Remove `AGENT_MODEL` from `.env` (or set it to `claude-sonnet-4-5-20250929`) and restart the service.
