@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import {
+  AGENT_MODEL,
   AGENTBRAIN_DIR,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -164,6 +165,9 @@ function readSecrets(): Record<string, string> {
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Pass AGENT_MODEL to container so agent-runner can use it
+  args.push('-e', `AGENT_MODEL=${AGENT_MODEL}`);
 
   for (const mount of mounts) {
     if (mount.readonly) {
