@@ -223,6 +223,26 @@ export async function runContainerAgent(
   const logsDir = path.join(GROUPS_DIR, config.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  // Create log file immediately with basic info
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const logFile = path.join(logsDir, `container-${timestamp}.log`);
+  const logHeader = [
+    `=== Container Run Log ===`,
+    `Started: ${new Date().toISOString()}`,
+    `Container: ${containerName}`,
+    ``,
+    `=== Input Summary ===`,
+    `Prompt length: ${input.prompt.length} chars`,
+    `Session ID: ${input.sessionId || 'new'}`,
+    ``,
+    `=== User Request ===`,
+    input.prompt.slice(0, 2000),
+    ``,
+    `=== Agent Response ===`,
+    `(streaming...)`
+  ].join('\n');
+  fs.writeFileSync(logFile, logHeader);
+
   return new Promise((resolve) => {
     const container = spawn('docker', containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -246,6 +266,20 @@ export async function runContainerAgent(
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
     const streamedResults: string[] = [];
+
+    // Function to append agent response to log file
+    const appendResponseToLog = (result: string) => {
+      try {
+        const currentLog = fs.readFileSync(logFile, 'utf-8');
+        const updated = currentLog.replace(
+          '=== Agent Response ===\n(streaming...)',
+          `=== Agent Response ===\n${streamedResults.join('\n---\n').slice(0, 5000)}`
+        );
+        fs.writeFileSync(logFile, updated);
+      } catch (err) {
+        logger.warn({ err, logFile }, 'Failed to append response to log');
+      }
+    };
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -284,6 +318,8 @@ export async function runContainerAgent(
             }
             if (parsed.result) {
               streamedResults.push(parsed.result);
+              // Immediately append to log file
+              appendResponseToLog(parsed.result);
             }
             hadStreamingOutput = true;
             resetTimeout();
@@ -385,13 +421,13 @@ export async function runContainerAgent(
         return;
       }
 
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(logsDir, `container-${timestamp}.log`);
+      // Update existing log file with final metadata
       const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
-      const logLines = [
-        `=== Container Run Log ===`,
-        `Timestamp: ${new Date().toISOString()}`,
+      const finalMetadata = [
+        ``,
+        `=== Container Completed ===`,
+        `Finished: ${new Date().toISOString()}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
         `Stdout Truncated: ${stdoutTruncated}`,
@@ -401,8 +437,9 @@ export async function runContainerAgent(
 
       const isError = code !== 0;
 
+      // Append additional verbose/error details if needed
       if (isVerbose || isError) {
-        logLines.push(
+        finalMetadata.push(
           `=== Input ===`,
           JSON.stringify({ ...input, secrets: undefined }, null, 2),
           ``,
@@ -423,43 +460,15 @@ export async function runContainerAgent(
           `=== Stdout${stdoutTruncated ? ' (TRUNCATED)' : ''} ===`,
           stdout,
         );
-      } else {
-        logLines.push(
-          `=== Input Summary ===`,
-          `Prompt length: ${input.prompt.length} chars`,
-          `Session ID: ${input.sessionId || 'new'}`,
-          ``,
-          `=== Mounts ===`,
-          mounts
-            .map((m) => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`)
-            .join('\n'),
-          ``,
-        );
       }
 
-      // Append request/response detail (for non-verbose; verbose already has full stdout)
-      if (!isVerbose) {
-        const detailLines: string[] = [''];
-        detailLines.push(
-          `=== User Request ===`,
-          input.prompt.slice(0, 2000),
-          ``,
-        );
-        if (streamedResults.length > 0) {
-          const combined = streamedResults.join('\n---\n');
-          detailLines.push(
-            `=== Agent Response (${streamedResults.length} result(s), ${combined.length} chars) ===`,
-            combined.slice(0, 2000),
-            ``,
-          );
-        } else {
-          detailLines.push(`=== Agent Response ===`, 'No streamed results', ``);
-        }
-        logLines.push(...detailLines);
+      // Append final metadata to existing log file
+      try {
+        fs.appendFileSync(logFile, '\n' + finalMetadata.join('\n'));
+        logger.debug({ logFile, verbose: isVerbose }, 'Container log updated');
+      } catch (err) {
+        logger.warn({ err, logFile }, 'Failed to update log file');
       }
-
-      fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
 
       if (code !== 0) {
         logger.error(
