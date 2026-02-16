@@ -52,7 +52,7 @@ launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist  # macOS
 # or: systemctl --user stop nanoclaw                        # Linux
 
 # 2. Check for running containers
-docker ps --filter name=nanoclaw-
+container ls --format json 2>/dev/null | python3 -c "import sys,json; cs=json.load(sys.stdin); print('\n'.join(c['configuration']['id'] for c in cs if c['configuration']['id'].startswith('nanoclaw-')))" || echo "No containers running"
 
 # 3. Check for uncommitted changes
 cd /path/to/nanoclaw && git status
@@ -131,7 +131,7 @@ mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/nanoclaw.service << 'EOF'
 [Unit]
 Description=NanoClaw Telegram Bot
-After=network.target docker.service
+After=network.target
 
 [Service]
 Type=simple
@@ -164,8 +164,8 @@ systemctl --user status nanoclaw
 # Check logs
 tail -f logs/nanoclaw.log
 
-# Check Docker
-docker ps --filter name=nanoclaw-
+# Check containers
+container ls 2>/dev/null || echo "No Apple Container system (macOS only)"
 
 # Send a test message to the bot on Telegram
 # Verify response arrives

@@ -208,27 +208,15 @@ No rebuild needed — the mounted `~/.mcp-auth/` directory is shared live.
 
 ### Container can't reach Heptabase API
 
-Verify the container has network access:
-
-```bash
-docker run --rm nanoclaw-agent:latest curl -s https://api.heptabase.com/mcp | head -5
-```
+Verify the container has network access by checking the container logs for MCP connection errors.
 
 ### npx mcp-remote not found in container
 
-The container uses `node:22-slim` which includes npm/npx. If there's an issue, check:
-
-```bash
-docker run --rm nanoclaw-agent:latest npx --version
-```
+The container uses `node:22-slim` which includes npm/npx. Check agent runner logs if mcp-remote fails to start.
 
 ### Slow startup (mcp-remote downloading)
 
-First run in a new container downloads `mcp-remote` via npx. Subsequent runs use the npm cache. To pre-install for faster startup, add to `container/Dockerfile` before the `USER node` line:
-
-```dockerfile
-RUN npm install -g mcp-remote
-```
+First run in a new container downloads `mcp-remote` via npx. Subsequent runs use the npm cache. To pre-install for faster startup, add mcp-remote to the container build.
 
 Then rebuild the container image.
 

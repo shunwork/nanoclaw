@@ -17,11 +17,11 @@ Ask the user which model they want using `AskUserQuestion`:
 
 ## Implementation
 
-The model is controlled by the `AGENT_MODEL` environment variable, which the host passes into the container at runtime.
+The model is controlled by the `AGENT_MODEL` environment variable, which the host passes to the container at runtime.
 
-### If the code changes are already applied
+### Quick Path: Just Set the Env Var
 
-Just set the env var in `.env`:
+Set `AGENT_MODEL` in `.env`:
 
 ```
 AGENT_MODEL=claude-sonnet-4-5-20250929
@@ -33,33 +33,28 @@ Then restart the service:
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
-No container rebuild needed — the env var is passed through at runtime.
+No container rebuild needed — the env var is passed through at runtime to the container process.
 
-### If the code changes are NOT applied yet
+### Code Architecture (Already Applied)
 
-Three files need changes:
+The model configuration flows through these files:
 
-1. **`src/config.ts`** — Add the env var:
+1. **`src/config.ts`** — Exports the env var:
    ```typescript
    export const AGENT_MODEL = process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929';
    ```
 
-2. **`src/container-runner.ts`** — Import `AGENT_MODEL` from config, then pass it to the container in `buildContainerArgs()`:
+2. **`src/container-runner.ts`** — `buildContainerArgs()` passes it to the container:
    ```typescript
    args.push('-e', `AGENT_MODEL=${AGENT_MODEL}`);
    ```
 
-3. **`container/agent-runner/src/index.ts`** — Read from env in the `query()` call:
+3. **`container/agent-runner/src/index.ts`** — Container's `runQuery()` reads from env:
    ```typescript
    model: process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929',
    ```
 
-Then build and rebuild:
-
-```bash
-npm run build
-cd container && npm run build && cd .. && ./container/build.sh
-```
+Container is Apple Container (not Docker) managed via launchd on macOS.
 
 ## Verify
 
@@ -73,4 +68,8 @@ The agent should complete successfully. Model choice affects response speed and 
 
 ## Reverting to Default
 
-Remove `AGENT_MODEL` from `.env` (or set it to `claude-sonnet-4-5-20250929`) and restart the service.
+Remove `AGENT_MODEL` from `.env` (or set it to `claude-sonnet-4-5-20250929`) and restart the service:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+```

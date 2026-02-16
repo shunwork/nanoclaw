@@ -9,8 +9,11 @@ Implements the personality system from `docs/agentbrain-design.md` Part 3. Creat
 
 **Prerequisite**: The memory module must be implemented first (add-memory skill). This skill requires:
 - `AgentBrain/` vault exists with proper directory structure
-- Container mounts are configured (`/workspace/brain`)
-- Agent runner loads core memory into system prompt
+- Container mounts are configured (`/workspace/brain` in `buildVolumeMounts(config: OwnerConfig)`)
+- `AGENTBRAIN_DIR` is defined in `src/config.ts`
+- Agent runner's `loadCoreMemory()` already reads `agentmind/soul.md` and `agentmind/identity.md`
+- System prompt uses `{ type: 'preset', preset: 'claude_code', append: coreMemory }`
+- `CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'` is set in settings.json
 - Container agent skills directory exists (`groups/main/.claude/skills/`)
 - Reflection mechanism is set up (agentbrain-manage skill exists)
 
@@ -188,14 +191,14 @@ Personality files live in `/workspace/brain/agentmind/`. **Personality evolution
 
 ## soul.md Rules
 
-- Read at startup (auto-loaded in system prompt)
+- Auto-loaded at startup via `loadCoreMemory()` into the system prompt (appended via `systemPrompt: { type: 'preset', preset: 'claude_code', append: coreMemory }`)
 - **immutable sections**: Listed in the `immutable` frontmatter field. You MUST NEVER modify these sections. Only the user can change them via Obsidian.
 - **mutable sections** (e.g., "Thinking Patterns", "Personality", "Behavioral Boundaries"): Can be updated during reflection if you observe stable patterns
 - Should get more **accurate** over time, not longer (~60-80 lines)
 
 ## identity.md Rules
 
-- Read at startup (auto-loaded in system prompt)
+- Auto-loaded at startup via `loadCoreMemory()` into the system prompt
 - Can be updated during reflection to better reflect observed interaction patterns
 - Should get more **accurate** over time, not longer (~40-60 lines)
 
@@ -271,10 +274,11 @@ If soul.md and identity.md were previously placeholders, verify that `index.md`'
 ## Step 7: Build and Verify
 
 ```bash
-# Rebuild container agent (skill files are mounted, but agent-runner might need rebuild if any code changed)
+# Container skills are mounted live via groups/main/.claude/skills/ — no rebuild needed for skill file changes.
+# If you modified any agent-runner code (unlikely for this skill), rebuild:
 cd container && npm run build && cd ..
 
-# Rebuild container image
+# Rebuild container image (only if Dockerfile or agent-runner code changed)
 ./container/build.sh
 
 # Restart service
@@ -291,7 +295,7 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
    ```
    The character count should be larger than before (soul.md + identity.md content added)
 
-3. Ask Cal: "Read your soul.md and tell me your core values" — it should describe the values without needing to Read the file (it's in the system prompt)
+3. Ask Cal: "Read your soul.md and tell me your core values" — it should describe the values without needing to Read the file (it's in the system prompt via `loadCoreMemory()`)
 
 4. Ask Cal: "What are your immutable values?" — it should identify the sections listed in the `immutable` frontmatter
 
@@ -309,10 +313,12 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 
 ## Troubleshooting
 
-**Agent ignores soul.md values**: Check that `loadCoreMemory()` in agent-runner includes `agentmind/soul.md` in its file list. Verify the file exists and has content.
+**Agent ignores soul.md values**: Check that `loadCoreMemory()` in `container/agent-runner/src/index.ts` includes `agentmind/soul.md` in its file list. Verify the content is being appended to the system prompt via `systemPrompt: { type: 'preset', preset: 'claude_code', append: coreMemory }`. Verify the file exists at `AgentBrain/agentmind/soul.md` and has content.
 
 **Agent modifies immutable sections**: The immutable protection is convention-based (defined in the agentmind-manage skill). If the agent violates it, strengthen the language in the skill or add an explicit check in the soul.md frontmatter comment.
 
 **Evolution records not created**: Check that the reflection flow reaches Step 4. The agent needs the agentmind-manage skill to be present in `groups/main/.claude/skills/`.
 
 **soul.md growing too large**: The agentmind-manage skill sets a ~60-80 line limit. During reflection, the agent should refine rather than expand. If it keeps growing, add stronger language about line limits in the skill.
+
+**Auto-memory interference**: Verify `CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'` is set in the settings.json file written by `buildVolumeMounts()` in `src/container-runner.ts`. The AgentBrain system replaces Claude's built-in auto-memory with its own vault-based approach.

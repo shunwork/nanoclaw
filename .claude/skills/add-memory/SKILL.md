@@ -259,11 +259,11 @@ updated: YYYY-MM-DD
 # NanoClaw
 
 ## Summary
-Personal Claude assistant. Single-user Node.js host serving one Telegram private chat via Docker-isolated Claude Agent SDK containers.
+Personal Claude assistant. Single-user Node.js host serving one Telegram private chat via Apple Container-isolated Claude Agent SDK containers.
 
 ## Architecture
 - Host: Node.js + grammy (Telegram bot, long polling)
-- Agent: Claude Sonnet 4.5 in Docker container
+- Agent: Claude Sonnet 4.5 in Apple Container
 - IPC: File-based (container writes JSON, host polls)
 - Database: SQLite (messages, tasks, sessions)
 - Memory: AgentBrain Obsidian vault
@@ -738,7 +738,7 @@ Types: note, tip, warning, danger, info, abstract, todo, example, quote, bug, su
 
 ## Step 9: Add Session Reset MCP Tool
 
-### In `container/agent-runner/src/ipc-mcp.ts`
+### In `container/agent-runner/src/ipc-mcp-stdio.ts`
 
 Add a `new_session` tool to the tools array in `createIpcMcp()`:
 
