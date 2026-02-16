@@ -112,6 +112,9 @@ async function processMessages(chatJid: string): Promise<boolean> {
 
   const output = await runAgent(prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
+    // Reset idle timer on any result (including null) to keep container alive
+    resetIdleTimer();
+
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks
@@ -121,7 +124,6 @@ async function processMessages(chatJid: string): Promise<boolean> {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
-      resetIdleTimer();
     }
 
     if (result.status === 'error') {
@@ -276,17 +278,17 @@ function ensureContainerSystemRunning(): void {
 
   // Kill and clean up orphaned NanoClaw containers from previous runs
   try {
-    const output = execSync('container ls --format json', {
+    const output = execSync('docker ps --filter "name=nanoclaw-" --format "{{.Names}}"', {
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf-8',
     });
-    const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
-    const orphans = containers
-      .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
-      .map((c) => c.configuration.id);
+    const orphans = output
+      .trim()
+      .split('\n')
+      .filter((name) => name.startsWith('nanoclaw-'));
     for (const name of orphans) {
       try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
+        execSync(`docker stop ${name}`, { stdio: 'pipe' });
       } catch { /* already stopped */ }
     }
     if (orphans.length > 0) {
