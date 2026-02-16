@@ -476,6 +476,16 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
+  // Direction B: fallback to assistant text when result.result is empty.
+  // During session resume, old messages are replayed. We use a phase flag
+  // to avoid sending replayed text to the user.
+  // - 'replaying': old messages being replayed, don't use assistant text as fallback
+  // - 'processing': past replay, assistant text is from new model responses
+  // Only the first query (resumeAt undefined) replays old messages.
+  // Subsequent queries (resumeAt set) resume at a specific point — no replay.
+  let phase: 'replaying' | 'processing' = (sessionId && !resumeAt) ? 'replaying' : 'processing';
+  let lastAssistantText = '';
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -544,6 +554,20 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+
+      // Extract text from assistant messages for fallback
+      if (phase === 'processing') {
+        const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } }).message?.content;
+        if (Array.isArray(content)) {
+          const text = content
+            .filter((b) => b.type === 'text' && b.text)
+            .map((b) => b.text)
+            .join('');
+          if (text) {
+            lastAssistantText = text;
+          }
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -559,12 +583,25 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+
+      // Direction B: if result text is empty, fall back to assistant text.
+      // During 'replaying' phase (first result after resume), don't use fallback
+      // to avoid resending old conversation text.
+      let outputText: string | null;
+      if (phase === 'replaying') {
+        outputText = textResult || null;
+        phase = 'processing'; // First result marks end of replay
+      } else {
+        outputText = (textResult || lastAssistantText) || null;
+      }
+
+      log(`Result #${resultCount}: subtype=${message.subtype}${outputText ? ` text=${outputText.slice(0, 200)}` : ''} (fallback=${!textResult && !!lastAssistantText})`);
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: outputText,
         newSessionId
       });
+      lastAssistantText = ''; // Reset for next turn
     }
   }
 
