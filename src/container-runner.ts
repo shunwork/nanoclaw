@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import {
+  AGENTBRAIN_DIR,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -71,6 +72,14 @@ function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
   mounts.push({
     hostPath: path.join(GROUPS_DIR, config.folder),
     containerPath: '/workspace/group',
+    readonly: false,
+  });
+
+  // AgentBrain vault
+  fs.mkdirSync(AGENTBRAIN_DIR, { recursive: true });
+  mounts.push({
+    hostPath: AGENTBRAIN_DIR,
+    containerPath: '/workspace/brain',
     readonly: false,
   });
 

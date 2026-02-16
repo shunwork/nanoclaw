@@ -1,0 +1,3 @@
+[submodule "AgentBrain"]
+	path = AgentBrain
+	url = git@github.com:shunwork/AgentBrain.git
