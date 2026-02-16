@@ -132,6 +132,15 @@ async function processMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
+  logger.info({
+    promptPreview: prompt.slice(0, 200).replace(/\n/g, ' '),
+    promptLength: prompt.length,
+    messageCount: missedMessages.length,
+    outputSentToUser,
+    hadError,
+    status: output,
+  }, 'Agent interaction');
+
   if (output === 'error' || hadError) {
     if (outputSentToUser) {
       logger.warn('Agent error after output was sent, skipping cursor rollback to prevent duplicates');

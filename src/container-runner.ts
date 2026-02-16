@@ -245,6 +245,7 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    const streamedResults: string[] = [];
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -280,6 +281,9 @@ export async function runContainerAgent(
             const parsed: ContainerOutput = JSON.parse(jsonStr);
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
+            }
+            if (parsed.result) {
+              streamedResults.push(parsed.result);
             }
             hadStreamingOutput = true;
             resetTimeout();
@@ -431,6 +435,27 @@ export async function runContainerAgent(
             .join('\n'),
           ``,
         );
+      }
+
+      // Append request/response detail (for non-verbose; verbose already has full stdout)
+      if (!isVerbose) {
+        const detailLines: string[] = [''];
+        detailLines.push(
+          `=== User Request ===`,
+          input.prompt.slice(0, 2000),
+          ``,
+        );
+        if (streamedResults.length > 0) {
+          const combined = streamedResults.join('\n---\n');
+          detailLines.push(
+            `=== Agent Response (${streamedResults.length} result(s), ${combined.length} chars) ===`,
+            combined.slice(0, 2000),
+            ``,
+          );
+        } else {
+          detailLines.push(`=== Agent Response ===`, 'No streamed results', ``);
+        }
+        logLines.push(...detailLines);
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'));
