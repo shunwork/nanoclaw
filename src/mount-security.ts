@@ -83,10 +83,6 @@ export function loadMountAllowlist(): MountAllowlist | null {
       throw new Error('blockedPatterns must be an array');
     }
 
-    if (typeof allowlist.nonMainReadOnly !== 'boolean') {
-      throw new Error('nonMainReadOnly must be a boolean');
-    }
-
     // Merge with default blocked patterns
     const mergedBlockedPatterns = [
       ...new Set([...DEFAULT_BLOCKED_PATTERNS, ...allowlist.blockedPatterns]),
@@ -231,7 +227,6 @@ export interface MountValidationResult {
  */
 export function validateMount(
   mount: AdditionalMount,
-  isMain: boolean,
 ): MountValidationResult {
   const allowlist = loadMountAllowlist();
 
@@ -293,16 +288,7 @@ export function validateMount(
   let effectiveReadonly = true; // Default to readonly
 
   if (requestedReadWrite) {
-    if (!isMain && allowlist.nonMainReadOnly) {
-      // Non-main groups forced to read-only
-      effectiveReadonly = true;
-      logger.info(
-        {
-          mount: mount.hostPath,
-        },
-        'Mount forced to read-only for non-main group',
-      );
-    } else if (!allowedRoot.allowReadWrite) {
+    if (!allowedRoot.allowReadWrite) {
       // Root doesn't allow read-write
       effectiveReadonly = true;
       logger.info(
@@ -335,7 +321,6 @@ export function validateMount(
 export function validateAdditionalMounts(
   mounts: AdditionalMount[],
   groupName: string,
-  isMain: boolean,
 ): Array<{
   hostPath: string;
   containerPath: string;
@@ -348,7 +333,7 @@ export function validateAdditionalMounts(
   }> = [];
 
   for (const mount of mounts) {
-    const result = validateMount(mount, isMain);
+    const result = validateMount(mount);
 
     if (result.allowed) {
       validatedMounts.push({
@@ -411,7 +396,6 @@ export function generateAllowlistTemplate(): string {
       'secret',
       'token',
     ],
-    nonMainReadOnly: true,
   };
 
   return JSON.stringify(template, null, 2);

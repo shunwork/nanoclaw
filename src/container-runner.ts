@@ -18,7 +18,7 @@ import {
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { OwnerConfig } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -39,7 +39,6 @@ export interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
-  isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
 }
@@ -57,54 +56,29 @@ interface VolumeMount {
   readonly: boolean;
 }
 
-function buildVolumeMounts(
-  group: RegisteredGroup,
-  isMain: boolean,
-): VolumeMount[] {
+function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
   const mounts: VolumeMount[] = [];
-  const homeDir = getHomeDir();
   const projectRoot = process.cwd();
 
-  if (isMain) {
-    // Main gets the entire project root mounted
-    mounts.push({
-      hostPath: projectRoot,
-      containerPath: '/workspace/project',
-      readonly: false,
-    });
+  // Always mount project root (single-user = full access)
+  mounts.push({
+    hostPath: projectRoot,
+    containerPath: '/workspace/project',
+    readonly: false,
+  });
 
-    // Main also gets its group folder as the working directory
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-  } else {
-    // Other groups only get their own folder
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
+  // Group folder as working directory
+  mounts.push({
+    hostPath: path.join(GROUPS_DIR, config.folder),
+    containerPath: '/workspace/group',
+    readonly: false,
+  });
 
-    // Global memory directory (read-only for non-main)
-    // Apple Container only supports directory mounts, not file mounts
-    const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
-      mounts.push({
-        hostPath: globalDir,
-        containerPath: '/workspace/global',
-        readonly: true,
-      });
-    }
-  }
-
-  // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
+  // Per-group Claude sessions directory
   const groupSessionsDir = path.join(
     DATA_DIR,
     'sessions',
-    group.folder,
+    config.folder,
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
@@ -112,20 +86,14 @@ function buildVolumeMounts(
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(settingsFile, JSON.stringify({
       env: {
-        // Enable agent swarms (subagent orchestration)
-        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
         CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-        // Load CLAUDE.md from additional mounted directories
-        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
         CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-        // Enable Claude's memory feature (persists user preferences between sessions)
-        // https://code.claude.com/docs/en/memory#manage-auto-memory
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
       },
     }, null, 2) + '\n');
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
+  // Sync skills from container/skills/ into the session's .claude/skills/
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
@@ -147,9 +115,8 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+  // IPC namespace
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', config.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
@@ -159,8 +126,7 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Mount agent-runner source from host — recompiled on container startup.
-  // Bypasses Apple Container's sticky build cache for code changes.
+  // Mount agent-runner source from host
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   mounts.push({
     hostPath: agentRunnerSrc,
@@ -168,12 +134,11 @@ function buildVolumeMounts(
     readonly: true,
   });
 
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
+  // Additional mounts validated against external allowlist
+  if (config.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain,
+      config.containerConfig.additionalMounts,
+      'main',
     );
     mounts.push(...validatedMounts);
   }
@@ -183,7 +148,6 @@ function buildVolumeMounts(
 
 /**
  * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
   return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
@@ -192,7 +156,6 @@ function readSecrets(): Record<string, string> {
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(
@@ -210,24 +173,22 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
 }
 
 export async function runContainerAgent(
-  group: RegisteredGroup,
+  config: OwnerConfig,
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
-  const groupDir = path.join(GROUPS_DIR, group.folder);
+  const groupDir = path.join(GROUPS_DIR, config.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
+  const mounts = buildVolumeMounts(config);
+  const containerName = `nanoclaw-main-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
-      group: group.name,
       containerName,
       mounts: mounts.map(
         (m) =>
@@ -240,15 +201,13 @@ export async function runContainerAgent(
 
   logger.info(
     {
-      group: group.name,
       containerName,
       mountCount: mounts.length,
-      isMain: input.isMain,
     },
     'Spawning container agent',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(GROUPS_DIR, config.folder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
@@ -264,11 +223,10 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
-    container.stdin.write(JSON.stringify(input));
+    // Also pass isMain=true for the container's MCP context
+    const containerInput = { ...input, isMain: true, secrets: readSecrets() };
+    container.stdin.write(JSON.stringify(containerInput));
     container.stdin.end();
-    // Remove secrets from input so they don't appear in logs
-    delete input.secrets;
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
@@ -278,14 +236,13 @@ export async function runContainerAgent(
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
 
-      // Always accumulate for logging
       if (!stdoutTruncated) {
         const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
         if (chunk.length > remaining) {
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, size: stdout.length },
+            { size: stdout.length },
             'Container stdout truncated due to size limit',
           );
         } else {
@@ -299,7 +256,7 @@ export async function runContainerAgent(
         let startIdx: number;
         while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
-          if (endIdx === -1) break; // Incomplete pair, wait for more data
+          if (endIdx === -1) break;
 
           const jsonStr = parseBuffer
             .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
@@ -312,14 +269,11 @@ export async function runContainerAgent(
               newSessionId = parsed.newSessionId;
             }
             hadStreamingOutput = true;
-            // Activity detected — reset the hard timeout
             resetTimeout();
-            // Call onOutput for all markers (including null results)
-            // so idle timers start even for "silent" query completions.
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              { error: err },
               'Failed to parse streamed output chunk',
             );
           }
@@ -331,17 +285,15 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ container: config.folder }, line);
       }
-      // Don't reset timeout on stderr — SDK writes debug logs continuously.
-      // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
-          { group: group.name, size: stderr.length },
+          { size: stderr.length },
           'Container stderr truncated due to size limit',
         );
       } else {
@@ -351,17 +303,15 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
+    const configTimeout = config.containerConfig?.timeout || CONTAINER_TIMEOUT;
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
+      logger.error({ containerName }, 'Container timeout, stopping gracefully');
       exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
+          logger.warn({ containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');
         }
       });
@@ -369,7 +319,6 @@ export async function runContainerAgent(
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -385,19 +334,15 @@ export async function runContainerAgent(
         fs.writeFileSync(timeoutLog, [
           `=== Container Run Log (TIMEOUT) ===`,
           `Timestamp: ${new Date().toISOString()}`,
-          `Group: ${group.name}`,
           `Container: ${containerName}`,
           `Duration: ${duration}ms`,
           `Exit Code: ${code}`,
           `Had Streaming Output: ${hadStreamingOutput}`,
         ].join('\n'));
 
-        // Timeout after output = idle cleanup, not failure.
-        // The agent already sent its response; this is just the
-        // container being reaped after the idle period expired.
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, containerName, duration, code },
+            { containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
@@ -411,7 +356,7 @@ export async function runContainerAgent(
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { containerName, duration, code },
           'Container timed out with no output',
         );
 
@@ -430,8 +375,6 @@ export async function runContainerAgent(
       const logLines = [
         `=== Container Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
-        `Group: ${group.name}`,
-        `IsMain: ${input.isMain}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
         `Stdout Truncated: ${stdoutTruncated}`,
@@ -444,7 +387,7 @@ export async function runContainerAgent(
       if (isVerbose || isError) {
         logLines.push(
           `=== Input ===`,
-          JSON.stringify(input, null, 2),
+          JSON.stringify({ ...input, secrets: undefined }, null, 2),
           ``,
           `=== Container Args ===`,
           containerArgs.join(' '),
@@ -483,7 +426,6 @@ export async function runContainerAgent(
       if (code !== 0) {
         logger.error(
           {
-            group: group.name,
             code,
             duration,
             stderr,
@@ -501,11 +443,11 @@ export async function runContainerAgent(
         return;
       }
 
-      // Streaming mode: wait for output chain to settle, return completion marker
+      // Streaming mode: wait for output chain to settle
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { duration, newSessionId },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -517,9 +459,8 @@ export async function runContainerAgent(
         return;
       }
 
-      // Legacy mode: parse the last output marker pair from accumulated stdout
+      // Legacy mode: parse the last output marker pair
       try {
-        // Extract JSON between sentinel markers for robust parsing
         const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
         const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
 
@@ -529,7 +470,6 @@ export async function runContainerAgent(
             .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
             .trim();
         } else {
-          // Fallback: last non-empty line (backwards compatibility)
           const lines = stdout.trim().split('\n');
           jsonLine = lines[lines.length - 1];
         }
@@ -538,7 +478,6 @@ export async function runContainerAgent(
 
         logger.info(
           {
-            group: group.name,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -550,7 +489,6 @@ export async function runContainerAgent(
       } catch (err) {
         logger.error(
           {
-            group: group.name,
             stdout,
             stderr,
             error: err,
@@ -568,7 +506,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error({ containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
         result: null,
@@ -580,7 +518,6 @@ export async function runContainerAgent(
 
 export function writeTasksSnapshot(
   groupFolder: string,
-  isMain: boolean,
   tasks: Array<{
     id: string;
     groupFolder: string;
@@ -591,53 +528,9 @@ export function writeTasksSnapshot(
     next_run: string | null;
   }>,
 ): void {
-  // Write filtered tasks to the group's IPC directory
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
-}
-
-export interface AvailableGroup {
-  jid: string;
-  name: string;
-  lastActivity: string;
-  isRegistered: boolean;
-}
-
-/**
- * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
- */
-export function writeGroupsSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  groups: AvailableGroup[],
-  registeredJids: Set<string>,
-): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
-
-  const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      {
-        groups: visibleGroups,
-        lastSync: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
+  fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
 }

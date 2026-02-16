@@ -6,7 +6,6 @@ import path from 'path';
 import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
@@ -19,11 +18,12 @@ import {
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { formatOutbound } from './router.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { OwnerConfig, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  ownerConfig: OwnerConfig;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
   onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
@@ -39,37 +39,16 @@ async function runTask(
   fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(
-    { taskId: task.id, group: task.group_folder },
+    { taskId: task.id },
     'Running scheduled task',
   );
 
-  const groups = deps.registeredGroups();
-  const group = Object.values(groups).find(
-    (g) => g.folder === task.group_folder,
-  );
+  const config = deps.ownerConfig;
 
-  if (!group) {
-    logger.error(
-      { taskId: task.id, groupFolder: task.group_folder },
-      'Group not found for task',
-    );
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: Date.now() - startTime,
-      status: 'error',
-      result: null,
-      error: `Group not found: ${task.group_folder}`,
-    });
-    return;
-  }
-
-  // Update tasks snapshot for container to read (filtered by group)
-  const isMain = task.group_folder === MAIN_GROUP_FOLDER;
+  // Update tasks snapshot for container to read
   const tasks = getAllTasks();
   writeTasksSnapshot(
-    task.group_folder,
-    isMain,
+    config.folder,
     tasks.map((t) => ({
       id: t.id,
       groupFolder: t.group_folder,
@@ -89,8 +68,7 @@ async function runTask(
   const sessionId =
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
 
-  // Idle timer: writes _close sentinel after IDLE_TIMEOUT of no output,
-  // so the container exits instead of hanging at waitForIpcMessage forever.
+  // Idle timer
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   const resetIdleTimer = () => {
@@ -103,22 +81,19 @@ async function runTask(
 
   try {
     const output = await runContainerAgent(
-      group,
+      config,
       {
         prompt: task.prompt,
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain,
         isScheduledTask: true,
       },
       (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
         if (streamedOutput.status === 'error') {
@@ -132,7 +107,6 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Messages are sent via MCP tool (IPC), result text is just logged
       result = output.result;
     }
 
@@ -167,7 +141,6 @@ async function runTask(
     const ms = parseInt(task.schedule_value, 10);
     nextRun = new Date(Date.now() + ms).toISOString();
   }
-  // 'once' tasks have no next run
 
   const resultSummary = error
     ? `Error: ${error}`
@@ -195,7 +168,6 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       for (const task of dueTasks) {
-        // Re-check task status in case it was paused/cancelled
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
