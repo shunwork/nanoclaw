@@ -1,6 +1,6 @@
 # Skill: detailed-logs
 
-Enable detailed request/response logging in container log files and structured pino output.
+Enable detailed logging in container log files and structured pino host log.
 
 ## When to Use
 
@@ -9,96 +9,84 @@ Enable detailed request/response logging in container log files and structured p
 - Auditing conversation flow
 - User says "detailed logs", "enable logging", "log requests and responses"
 
-## What It Does
-
-Enhances two logging paths:
+## Architecture
 
 ### 1. Container Log Files (`groups/main/logs/container-*.log`)
 
-In non-verbose mode, appends request/response content after the operational log. The container output is streamed via `onOutput` callbacks and collected in `streamedResults: string[]`, then appended to the log file in the `container.on('close')` handler:
+Real-time stderr capture — every `[agent-runner]` line is appended as it arrives, including multi-turn conversations. Format:
 
 ```
-=== User Request ===
-<messages><message sender="shun" time="14:07">...</message></messages>
+=== nanoclaw-main-1771341316097 ===
+Started: 2026-02-17T15:15:16.098Z
+Session: 639eb607-0ba2-41ac-a5b8-70699248c9e3
+Prompt: 192 chars
 
-=== Agent Response ===
-...streamed response lines...
-Internal reasoning:
-...more response...
+[agent-runner] Received input for group: main
+[agent-runner] Loaded 209 known UUIDs from transcript
+[agent-runner] Starting query Q1 (session: 639eb607-..., resumeAt: latest, knownUuids: 209)...
+[agent-runner] Core memory loaded: 5707 chars
+[agent-runner] [Q1 #1] system/init session=639eb607-...
+[agent-runner] [Q1 #2] assistant uuid=e05f5482… text=回覆內容… (315 chars)
+[agent-runner] [Q1 #3] assistant uuid=fe418faa…
+  → Read { file_path: "/workspace/brain/memory/context.md" }
+[agent-runner] [Q1 #5] assistant uuid=1e69e94a…
+  → Edit { file_path: "/workspace/group/CLAUDE.md", old_string: "## Communication…" }
+[agent-runner] [Q1 result#1] source=assistant-fallback text=回覆… (315 chars)
+[agent-runner] Piping IPC message into active query (131 chars)
+[agent-runner] [Q1 #10] system/init session=639eb607-...
+[agent-runner] [Q1 #11] assistant uuid=afedc820… text=第二輪回覆… (179 chars)
+[agent-runner] [Q1 result#2] source=result text=第二輪回覆… (179 chars)
+[agent-runner] Query Q1 done. Messages: 12, results: 2, closedDuringQuery: false
+
+=== Completed ===
+Duration: 215324ms
+Exit code: 0
 ```
 
-Content is truncated:
-- User prompt: 2000 chars max
-- Agent response (streamed results): 2000 chars max
-
-For error cases, the error message is appended instead.
+Key properties:
+- **Real-time append** — each stderr line written as it arrives
+- **Multi-turn captured** — piped IPC messages and subsequent results all logged
+- **Tool parameters shown** — each tool_use block on its own line with `→` prefix, values truncated to 80 chars
+- **tool_use_summary events** logged when available from SDK
+- **No stdout** — OUTPUT markers are protocol, not useful for debugging
 
 ### 2. Structured Pino Log (`logs/nanoclaw.log`)
 
-Adds an "Agent interaction" log line after each agent call with:
-- `promptPreview`: first 200 chars of prompt (newlines replaced with spaces)
-- `promptLength`: total prompt character count
-- `messageCount`: number of missed messages processed
-- `outputSentToUser`: boolean, whether a message was sent to Telegram
-- `hadError`: boolean, whether an error occurred
-- `status`: final output status (message, log, or error)
+Key log lines at INFO level:
 
-Example:
-```json
-{
-  "promptPreview": "You are Cal, a personal assistant...",
-  "promptLength": 5234,
-  "messageCount": 3,
-  "outputSentToUser": true,
-  "hadError": false,
-  "status": "message",
-  "msg": "Agent interaction"
-}
-```
+| Log message | Fields |
+|-------------|--------|
+| `Message received` | `chatJid`, `sender`, `preview` (100 chars), `length` |
+| `Processing messages` | `messageCount` |
+| `Enqueued for new container` | — |
+| `Piped to active container` | `count` |
+| `Session updated` | `folder`, `sessionId` |
+| `Agent output` | `preview` (200 chars, newlines replaced), `length` |
+| `Agent interaction` | `promptPreview`, `promptLength`, `messageCount`, `outputSentToUser`, `responsePreview`, `hadError`, `status` |
 
 ## Files Modified
 
 | File | Change |
 |------|--------|
-| `src/container-runner.ts` | Collects streamed output via `onOutput` callbacks; appends request/response sections to log file in `container.on('close')` handler |
-| `src/index.ts` | Structured pino logger call after agent interaction with preview fields and metadata |
+| `src/container-runner.ts` | Real-time stderr append to log file, minimal header/footer |
+| `src/index.ts` | Structured pino fields (message preview, session updates, typing fix) |
+| `container/agent-runner/src/index.ts` | Tool name + parameters logging, tool_use_summary events |
 
 ## Implementation
 
-The changes are applied directly by this skill. After applying:
+Changes are already applied. After modifying these files:
 
 ```bash
-npm run build        # Recompile host
-# Restart the service (launchctl unload/load or restart process)
+npm run build                              # Recompile host
+cd container/agent-runner && npm run build  # Recompile agent-runner
+./container/build.sh                       # Rebuild container image
+# Restart service (launchctl unload/load)
 ```
-
-No container rebuild needed — these are host-side changes only.
-
-## How It Works
-
-**Container Output Streaming:**
-- `runContainerAgent()` uses `onOutput` callback to collect streamed results
-- Each streamed output line is pushed to `streamedResults: string[]`
-- When container closes, the full streamed output is appended to the log file
-
-**Pino Structured Logging:**
-- After `query()` resolves, host logs structured metadata with previews
-- Prompt and response are truncated to reasonable lengths for log readability
-- Useful for analytics, debugging, and auditing agent behavior
 
 ## Verification
 
 1. Send a test message to the bot
-2. Check the latest `groups/main/logs/container-*.log` — should have `=== User Request ===` and `=== Agent Response ===` sections
-3. Tail pino output (`logs/nanoclaw.log`) for `"msg":"Agent interaction"` lines with preview fields and metadata
-
-## Customization
-
-To disable detailed logs:
-- Set `verbose: false` in `src/config.ts` — container log will omit request/response sections
-- Remove the pino structured logging call in `src/index.ts` if you prefer less verbose logs
-
-To adjust truncation limits:
-- **Prompt truncation**: edit `prompt.slice(0, 2000)` in `src/container-runner.ts`
-- **Response truncation**: edit `streamedResults.join('').slice(0, 2000)` in `src/container-runner.ts`
-- **Preview truncation**: edit `prompt.slice(0, 200)` in `src/index.ts`
+2. Check `groups/main/logs/container-*.log` — should show `[agent-runner]` lines with tool parameters
+3. Check `logs/nanoclaw.log` — should have "Message received" with `preview` field
+4. Send a follow-up message (multi-turn) — verify second turn appears in the same container log file
+5. Check `docker logs <container>` matches the container log file content
