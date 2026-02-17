@@ -116,9 +116,10 @@ async function processMessages(chatJid: string): Promise<boolean> {
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       const text = stripInternalTags(raw);
-      logger.info(`Agent output: ${raw.slice(0, 200)}`);
+      logger.info({ preview: raw.slice(0, 200).replace(/\n/g, ' '), length: raw.length }, 'Agent output');
       if (text) {
         await channel.sendMessage(chatJid, text);
+        await channel.setTyping(chatJid, false);
         outputSentToUser = true;
         lastResponsePreview = text.slice(0, 200).replace(/\n/g, ' ');
         resetIdleTimer();
@@ -185,6 +186,7 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[ownerConfig.folder] = output.newSessionId;
           setSession(ownerConfig.folder, output.newSessionId);
+          logger.info({ folder: ownerConfig.folder, sessionId: output.newSessionId }, 'Session updated');
         }
         await onOutput(output);
       }
@@ -328,18 +330,20 @@ async function main(): Promise<void> {
       // Only process messages from owner's chat
       if (chatJid !== OWNER_CHAT_JID) return;
       storeMessage(msg);
+      logger.info({ chatJid, sender: msg.sender_name, preview: msg.content.slice(0, 100), length: msg.content.length }, 'Message received');
 
       // Pipe to active container or enqueue for a new one
       const missedMessages = getMessagesSince(chatJid, lastAgentTimestamp, ASSISTANT_NAME);
       const formatted = formatMessages(missedMessages);
 
       if (queue.sendMessage(chatJid, formatted)) {
-        logger.debug({ count: missedMessages.length }, 'Piped messages to active container');
+        logger.info({ count: missedMessages.length }, 'Piped to active container');
         lastAgentTimestamp = missedMessages[missedMessages.length - 1].timestamp;
         saveState();
         channel.setTyping(chatJid, true);
       } else {
         queue.enqueueMessageCheck(chatJid);
+        logger.info('Enqueued for new container');
       }
     },
     onChatMetadata: (chatJid, timestamp, name) => {
@@ -369,7 +373,7 @@ async function main(): Promise<void> {
   queue.setProcessMessagesFn(processMessages);
   recoverPendingMessages();
 
-  logger.info(`NanoClaw running (owner: ${OWNER_CHAT_JID})`);
+  logger.info({ owner: OWNER_CHAT_JID }, 'NanoClaw running');
 }
 
 // Guard: only run when executed directly, not when imported by tests

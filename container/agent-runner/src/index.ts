@@ -606,7 +606,24 @@ async function runQuery(
         lastAssistantText = text;
         log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… text=${text.slice(0, 100)}… (${text.length} chars)`);
       } else {
-        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (tool_use only)`);
+        const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
+        const toolUseBlocks = content?.filter((b) => b.type === 'tool_use') ?? [];
+        if (toolUseBlocks.length > 0) {
+          log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}…`);
+          for (const block of toolUseBlocks) {
+            const params = block.input
+              ? Object.entries(block.input)
+                  .map(([k, v]) => {
+                    const s = typeof v === 'string' ? v : JSON.stringify(v);
+                    return `${k}: ${JSON.stringify(s.length > 80 ? s.slice(0, 80) + '…' : s)}`;
+                  })
+                  .join(', ')
+              : '';
+            log(`  → ${block.name || 'unknown'}${params ? ` { ${params} }` : ''}`);
+          }
+        } else {
+          log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (tool_use only)`);
+        }
       }
       continue;
     }
@@ -620,6 +637,15 @@ async function runQuery(
       log(`[Q${queryNumber} #${messageCount}] task_notification task=${tn.task_id} status=${tn.status}`);
     } else if (message.type === 'system') {
       log(`[Q${queryNumber} #${messageCount}] system/${(message as { subtype?: string }).subtype}`);
+    }
+
+    // --- Tool use summary ---
+    if (message.type === 'tool_use_summary') {
+      const msg = message as Record<string, unknown>;
+      const summary = (msg.summary || msg.tool_use_summary || msg.text || '') as string;
+      if (summary) {
+        log(`[Q${queryNumber} #${messageCount}] tool_summary: ${summary.slice(0, 200)}`);
+      }
     }
 
     // --- Result message: emit output with fallback ---
