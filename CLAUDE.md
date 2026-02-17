@@ -41,7 +41,7 @@ Containers stay alive between messages. After the initial query completes:
 
 Container writes JSON files to `/workspace/ipc/{messages,tasks}/`. Host's `startIpcWatcher()` polls every 1s:
 - **messages/**: `send_message` calls → host sends to Telegram immediately
-- **tasks/**: `schedule_task`, `pause_task`, `resume_task`, `cancel_task` → host writes to SQLite
+- **tasks/**: `schedule_task`, `pause_task`, `resume_task`, `cancel_task`, `new_session` → host writes to SQLite
 
 ### Task Scheduler Flow
 
@@ -74,7 +74,7 @@ container/                  Apple Container image
   build.sh                  Apple Container build wrapper
   agent-runner/src/
     index.ts                Reads ContainerInput from stdin, runs query() loop, streams output
-    ipc-mcp-stdio.ts        Standalone MCP server: send_message, schedule/list/pause/resume/cancel
+    ipc-mcp-stdio.ts        Standalone MCP server: send_message, schedule/list/pause/resume/cancel, new_session
   skills/
     agent-browser.md        Browser automation reference (not auto-loaded, see notes below)
 
@@ -95,7 +95,7 @@ data/sessions/main/.claude/ Agent SDK session transcripts
 data/env/                   Filtered .env for container (only CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY)
 
 .claude/skills/             Claude Code skills (for development, NOT for container agent)
-docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md
+docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, message-system-design.md
 ```
 
 ## Key Files
@@ -113,7 +113,7 @@ docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md
 | `src/router.ts` | `formatMessages()`: XML formatting; `formatOutbound()`: text cleanup |
 | `src/mount-security.ts` | Validates mounts against `~/.config/nanoclaw/mount-allowlist.json` |
 | `container/agent-runner/src/index.ts` | Container entrypoint: query loop, AgentBrain loading, streaming output |
-| `container/agent-runner/src/ipc-mcp-stdio.ts` | Standalone MCP server: 6 tools for host communication |
+| `container/agent-runner/src/ipc-mcp-stdio.ts` | Standalone MCP server: 7 tools for host communication |
 | `groups/main/CLAUDE.md` | Agent's personality, instructions, and memory |
 
 ## Container Agent Configuration
@@ -259,6 +259,9 @@ After changes to `groups/main/CLAUDE.md`: no rebuild needed (mounted live).
 - **Typing indicator**: Repeating timer every 4.5s (Telegram expires after 5s).
 - **Queue retry**: Exponential backoff, 5 retries, base 5s. Resets on success.
 - **Container naming**: `nanoclaw-main-{timestamp}`. Stale containers cleaned on startup.
-- **Internal tags**: Agent wraps non-user content in `<internal>...</internal>`. Host strips before sending.
+- **Internal tags**: Agent wraps non-user content in `<internal>...</internal>`. Host strips before sending (both result pipeline and IPC send_message).
+- **Replay detection**: UUID-based — agent-runner loads known UUIDs from session transcript at startup, skips replayed assistant messages during session resume.
+- **Result fallback**: When `result.result` is empty (e.g., agent's last turn was tool calls), falls back to text from assistant messages.
+- **Session reset**: Agent calls `new_session` MCP tool → IPC → host clears session record → next container starts fresh.
 - **IPv4 forced**: Telegram API connections use `https.Agent({ family: 4 })` to avoid IPv6 issues.
 - **Streaming output**: Multiple `OUTPUT_START_MARKER`/`OUTPUT_END_MARKER` pairs per container run.
