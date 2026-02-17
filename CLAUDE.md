@@ -1,6 +1,6 @@
 # NanoClaw
 
-Personal Claude assistant. Single-user mode — one Node.js host process serving one Telegram private chat via Apple Container-isolated Claude Agent SDK containers.
+Personal Claude assistant. Single-user mode — one Node.js host process serving one Telegram private chat via Docker-isolated Claude Agent SDK containers.
 
 See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
@@ -12,7 +12,7 @@ Telegram ←→ grammy Bot (long polling)
          src/index.ts (host process)
            ├── storeMessage() → SQLite
            ├── GroupQueue → concurrency control
-           └── runContainerAgent() → Apple Container
+           └── runContainerAgent() → Docker Container
                   ├── Claude Agent SDK (query())
                   ├── Tools: Bash, Read/Write/Edit/Glob/Grep, WebSearch/WebFetch, Task/Teams
                   ├── agent-browser (Chromium-based)
@@ -25,7 +25,7 @@ Telegram ←→ grammy Bot (long polling)
 
 1. Telegram message → `bot.on('message:text')` → `storeMessage()` to SQLite + `queue.enqueueMessageCheck()`
 2. Queue waits for container slot → `processMessages()` → reads unprocessed messages from DB, formats as XML prompt
-3. `runContainerAgent()` → spawns Apple Container, pipes JSON via stdin
+3. `runContainerAgent()` → spawns Docker container, pipes JSON via stdin
 4. Container runs `agent-runner` → calls Agent SDK `query()` with tools
 5. Agent produces text results (multiple possible via streaming), wrapped in `OUTPUT_START_MARKER`/`OUTPUT_END_MARKER` pairs
 6. Host parses each result → strips `<internal>...</internal>` tags → sends remainder to Telegram
@@ -58,7 +58,7 @@ src/                        Host process (TypeScript, compiled to dist/)
   index.ts                  Main: Telegram bot, message routing, IPC watcher
   channels/telegram.ts      TelegramChannel: grammy bot, typing indicator, message splitting
   config.ts                 OWNER_CHAT_JID, ASSISTANT_NAME, AGENT_MODEL, paths, timeouts
-  container-runner.ts       Apple Container spawn, volume mounts, streaming output parsing
+  container-runner.ts       Docker container spawn, volume mounts, streaming output parsing
   task-scheduler.ts         Scheduled task execution loop
   db.ts                     SQLite: messages, tasks, sessions, router state
   group-queue.ts            Serialized queue with retry backoff, concurrency limit
@@ -69,9 +69,9 @@ src/                        Host process (TypeScript, compiled to dist/)
   types.ts                  OwnerConfig, ContainerConfig, ScheduledTask, etc.
   logger.ts                 Pino logger with pino-pretty
 
-container/                  Apple Container image
+container/                  Docker container image
   Dockerfile                Node 22-slim + Chromium + agent-browser + claude-code
-  build.sh                  Apple Container build wrapper
+  build.sh                  Docker build wrapper
   agent-runner/src/
     index.ts                Reads ContainerInput from stdin, runs query() loop, streams output
     ipc-mcp-stdio.ts        Standalone MCP server: send_message, schedule/list/pause/resume/cancel, new_session
@@ -92,10 +92,10 @@ groups/main/                Agent workspace (mounted → /workspace/group)
 store/messages.db           SQLite database (messages, scheduled_tasks, task_run_logs, etc.)
 data/ipc/main/              IPC files: messages/, tasks/, input/ (ephemeral)
 data/sessions/main/.claude/ Agent SDK session transcripts
-data/env/                   Filtered .env for container (only CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY)
+data/env/                   (Legacy — secrets now passed via stdin JSON)
 
 .claude/skills/             Claude Code skills (for development, NOT for container agent)
-docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, message-system-design.md
+docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, SDK_DEEP_DIVE.md, DEBUG_CHECKLIST.md, message-system-design.md
 ```
 
 ## Key Files
@@ -121,7 +121,7 @@ docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, message-syste
 The agent runs the model specified by `AGENT_MODEL` env var (default: `claude-sonnet-4-5-20250929`) with these settings (in `container/agent-runner/src/index.ts`):
 
 - **allowedTools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `Task`, `TaskOutput`, `TaskStop`, `TeamCreate`, `TeamDelete`, `SendMessage`, `TodoWrite`, `ToolSearch`, `Skill`, `NotebookEdit`, `mcp__nanoclaw__*`
-- **permissionMode**: `bypassPermissions` (sandboxed in Apple Container)
+- **permissionMode**: `bypassPermissions` (sandboxed in Docker container)
 - **settingSources**: `['project', 'user']` — reads `CLAUDE.md` and `.claude/` from `/workspace/group`
 - **mcpServers**: `nanoclaw` (standalone stdio process, defined in `ipc-mcp-stdio.ts`)
 - **hooks**: `PreCompact` (archives transcripts), `PreToolUse/Bash` (strips secrets from Bash env)
@@ -143,8 +143,10 @@ On container startup, the agent-runner loads memory from `/workspace/brain/`:
 | `/workspace/brain` | `AgentBrain/` | read-write |
 | `/home/node/.claude` | `data/sessions/main/.claude/` | read-write |
 | `/workspace/ipc` | `data/ipc/main/` | read-write |
-| `/workspace/env-dir` | `data/env/` | read-only |
+| `/app/src` | `container/agent-runner/src/` | read-only |
 | `/workspace/extra/*` | Additional mounts (if configured) | per-config |
+
+Secrets (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) are passed via stdin JSON, not mounted as files.
 
 ### Extending the Agent
 
@@ -242,7 +244,7 @@ npm run format       # Prettier format
 
 # Container
 cd container && npm run build && cd ..   # Rebuild agent-runner TypeScript
-./container/build.sh                     # Rebuild Apple Container image
+./container/build.sh                     # Rebuild Docker container image
 
 # Service management (macOS launchd)
 launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
