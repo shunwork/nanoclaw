@@ -434,10 +434,56 @@ function loadVolatileContext(): string {
 }
 
 /**
+ * Load known UUIDs from the session transcript to detect replayed messages.
+ * During session resume, the SDK replays old assistant messages. Messages with
+ * UUIDs in this set are skipped to avoid re-sending old text to the user.
+ */
+function loadKnownUuids(sessionId: string | undefined): Set<string> {
+  const uuids = new Set<string>();
+  if (!sessionId) return uuids;
+
+  const projectDir = '/home/node/.claude/projects/-workspace-group';
+  const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+  if (!fs.existsSync(transcriptPath)) return uuids;
+
+  try {
+    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.uuid) uuids.add(entry.uuid);
+      } catch { /* skip malformed lines */ }
+    }
+    log(`Loaded ${uuids.size} known UUIDs from transcript`);
+  } catch (err) {
+    log(`Failed to load UUIDs from transcript: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return uuids;
+}
+
+/**
+ * Extract text content from an assistant message's content blocks.
+ */
+function extractAssistantText(message: unknown): string {
+  const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } }).message?.content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((b) => b.type === 'text' && b.text)
+    .map((b) => b.text)
+    .join('');
+}
+
+/**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
+ *
+ * UUID-based replay detection: messages with UUIDs already in knownUuids
+ * are skipped (replayed from session resume). New UUIDs are added to the set
+ * so they persist across queries within the same container.
  */
 async function runQuery(
   prompt: string,
@@ -445,7 +491,9 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
-  resumeAt?: string,
+  resumeAt: string | undefined,
+  knownUuids: Set<string>,
+  queryNumber: number,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
@@ -475,15 +523,6 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
-
-  // Direction B: fallback to assistant text when result.result is empty.
-  // During session resume, old messages are replayed. We use a phase flag
-  // to avoid sending replayed text to the user.
-  // - 'replaying': old messages being replayed, don't use assistant text as fallback
-  // - 'processing': past replay, assistant text is from new model responses
-  // Only the first query (resumeAt undefined) replays old messages.
-  // Subsequent queries (resumeAt set) resume at a specific point — no replay.
-  let phase: 'replaying' | 'processing' = (sessionId && !resumeAt) ? 'replaying' : 'processing';
   let lastAssistantText = '';
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -549,64 +588,60 @@ async function runQuery(
     }
   })) {
     messageCount++;
-    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
 
+    // --- Assistant message: UUID-based replay detection ---
     if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
+      const uuid = (message as { uuid: string }).uuid;
+      lastAssistantUuid = uuid;
 
-      // Extract text from assistant messages for fallback
-      if (phase === 'processing') {
-        const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } }).message?.content;
-        if (Array.isArray(content)) {
-          const text = content
-            .filter((b) => b.type === 'text' && b.text)
-            .map((b) => b.text)
-            .join('');
-          if (text) {
-            lastAssistantText = text;
-          }
-        }
+      if (knownUuids.has(uuid)) {
+        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (replay, skipped)`);
+        continue;
       }
+
+      // New assistant message — add to known set and extract text
+      knownUuids.add(uuid);
+      const text = extractAssistantText(message);
+      if (text) {
+        lastAssistantText = text;
+        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… text=${text.slice(0, 100)}… (${text.length} chars)`);
+      } else {
+        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (tool_use only)`);
+      }
+      continue;
     }
 
+    // --- System messages ---
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
-      log(`Session initialized: ${newSessionId}`);
-    }
-
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
+      log(`[Q${queryNumber} #${messageCount}] system/init session=${newSessionId}`);
+    } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
       const tn = message as { task_id: string; status: string; summary: string };
-      log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+      log(`[Q${queryNumber} #${messageCount}] task_notification task=${tn.task_id} status=${tn.status}`);
+    } else if (message.type === 'system') {
+      log(`[Q${queryNumber} #${messageCount}] system/${(message as { subtype?: string }).subtype}`);
     }
 
+    // --- Result message: emit output with fallback ---
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const outputText = textResult || lastAssistantText || null;
+      const source = textResult ? 'result' : lastAssistantText ? 'assistant-fallback' : 'none';
 
-      // Direction B: if result text is empty, fall back to assistant text.
-      // During 'replaying' phase (first result after resume), don't use fallback
-      // to avoid resending old conversation text.
-      let outputText: string | null;
-      if (phase === 'replaying') {
-        outputText = textResult || null;
-        phase = 'processing'; // First result marks end of replay
-      } else {
-        outputText = (textResult || lastAssistantText) || null;
-      }
+      log(`[Q${queryNumber} result#${resultCount}] source=${source} text=${(outputText || '(null)').slice(0, 200)} (${outputText?.length || 0} chars)`);
 
-      log(`Result #${resultCount}: subtype=${message.subtype}${outputText ? ` text=${outputText.slice(0, 200)}` : ''} (fallback=${!textResult && !!lastAssistantText})`);
       writeOutput({
         status: 'success',
         result: outputText,
         newSessionId
       });
-      lastAssistantText = ''; // Reset for next turn
+      lastAssistantText = ''; // Reset for next result
     }
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
+  log(`Query Q${queryNumber} done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
@@ -644,6 +679,9 @@ async function main(): Promise<void> {
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
 
+  // Load known UUIDs from transcript for replay detection (shared across queries)
+  const knownUuids = loadKnownUuids(sessionId);
+
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.isScheduledTask) {
@@ -667,11 +705,13 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let queryNumber = 0;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      queryNumber++;
+      log(`Starting query Q${queryNumber} (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'}, knownUuids: ${knownUuids.size})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, knownUuids, queryNumber);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -680,15 +720,10 @@ async function main(): Promise<void> {
       }
 
       // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
       }
-
-      // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
 
       log('Query ended, waiting for next IPC message...');
 

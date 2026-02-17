@@ -226,6 +226,21 @@ server.tool(
   },
 );
 
+server.tool(
+  'new_session',
+  'Reset the current conversation session. All AgentBrain memory (soul, identity, knowledge, daily logs) is preserved — only the session transcript is cleared. The reset takes effect on the next message. Use this after reflection or when the conversation context has become too cluttered.',
+  {},
+  async () => {
+    writeIpcFile(TASKS_DIR, {
+      type: 'new_session',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { content: [{ type: 'text' as const, text: 'Session reset requested. New session starts on next message.' }] };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

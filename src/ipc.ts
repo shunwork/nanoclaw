@@ -9,8 +9,9 @@ import {
   OWNER_CHAT_JID,
   TIMEZONE,
 } from './config.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getTaskById, setSession, updateTask } from './db.js';
 import { logger } from './logger.js';
+import { stripInternalTags } from './router.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -44,8 +45,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
           const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
           if (data.type === 'message' && data.text) {
             const targetJid = data.chatJid || OWNER_CHAT_JID;
-            await deps.sendMessage(targetJid, data.text);
-            logger.info({ chatJid: targetJid }, 'IPC message sent');
+            const text = stripInternalTags(data.text);
+            if (text) {
+              await deps.sendMessage(targetJid, text);
+              logger.info({ chatJid: targetJid }, 'IPC message sent');
+            }
           }
           fs.unlinkSync(filePath);
         } catch (err) {
@@ -97,9 +101,16 @@ async function processTaskIpc(
     schedule_value?: string;
     context_mode?: string;
     targetJid?: string;
+    groupFolder?: string;
   },
 ): Promise<void> {
   switch (data.type) {
+    case 'new_session': {
+      const folder = data.groupFolder || 'main';
+      setSession(folder, '');
+      logger.info({ folder }, 'Session reset via IPC');
+      break;
+    }
     case 'schedule_task':
       if (data.prompt && data.schedule_type && data.schedule_value) {
         const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once';

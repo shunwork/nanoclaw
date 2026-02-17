@@ -268,12 +268,15 @@ export async function runContainerAgent(
     const streamedResults: string[] = [];
 
     // Function to append agent response to log file
-    const appendResponseToLog = (result: string) => {
+    const appendResponseToLog = () => {
       try {
         const currentLog = fs.readFileSync(logFile, 'utf-8');
+        const formattedResults = streamedResults
+          .map((r, i) => `[${i + 1}] (${r.length} chars)\n${r.slice(0, 2000)}`)
+          .join('\n---\n');
         const updated = currentLog.replace(
           '=== Agent Response ===\n(streaming...)',
-          `=== Agent Response ===\n${streamedResults.join('\n---\n').slice(0, 5000)}`
+          `=== Agent Response ===\n${formattedResults || '(no text output)'}`
         );
         fs.writeFileSync(logFile, updated);
       } catch (err) {
@@ -318,8 +321,7 @@ export async function runContainerAgent(
             }
             if (parsed.result) {
               streamedResults.push(parsed.result);
-              // Immediately append to log file
-              appendResponseToLog(parsed.result);
+              appendResponseToLog();
             }
             hadStreamingOutput = true;
             resetTimeout();

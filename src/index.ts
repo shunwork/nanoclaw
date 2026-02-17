@@ -27,7 +27,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
-import { formatMessages, formatOutbound } from './router.js';
+import { formatMessages, formatOutbound, stripInternalTags } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { OwnerConfig } from './types.js';
 import { logger } from './logger.js';
@@ -110,19 +110,18 @@ async function processMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  let lastResponsePreview = '';
   const output = await runAgent(prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
-    // Reset idle timer on any result (including null) to keep container alive
-    resetIdleTimer();
-
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      const text = stripInternalTags(raw);
       logger.info(`Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
+        lastResponsePreview = text.slice(0, 200).replace(/\n/g, ' ');
+        resetIdleTimer();
       }
     }
 
@@ -139,6 +138,7 @@ async function processMessages(chatJid: string): Promise<boolean> {
     promptLength: prompt.length,
     messageCount: missedMessages.length,
     outputSentToUser,
+    responsePreview: lastResponsePreview || undefined,
     hadError,
     status: output,
   }, 'Agent interaction');
