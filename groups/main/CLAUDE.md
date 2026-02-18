@@ -58,3 +58,12 @@ The `conversations/` folder in this workspace contains archived past conversatio
 Key paths inside the container:
 - `/workspace/project/store/messages.db` - SQLite database
 - `/workspace/brain/` - AgentBrain vault (memory, knowledge, personality)
+
+## Heptabase
+
+You have access to Heptabase via MCP tools (prefixed with `mcp__heptabase__`). Use these to:
+- Search and read cards, whiteboards, and journal entries
+- Create new cards and append to journal entries
+- Browse whiteboard structures and connections
+
+When the user asks about their notes, knowledge base, or wants to save/organize information in Heptabase, use the Heptabase tools.

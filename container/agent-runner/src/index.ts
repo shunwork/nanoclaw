@@ -549,7 +549,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      model: process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929',
+      model: process.env.AGENT_MODEL || 'claude-sonnet-4-6',
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -565,7 +565,8 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__heptabase__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -579,6 +580,10 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
           },
+        },
+        heptabase: {
+          command: 'npx',
+          args: ['-y', 'mcp-remote@latest', 'https://api.heptabase.com/mcp', '--transport', 'http-only'],
         },
       },
       hooks: {

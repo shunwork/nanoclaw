@@ -144,6 +144,16 @@ function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
     readonly: true,
   });
 
+  // Heptabase MCP OAuth token cache (used by mcp-remote)
+  const mcpAuthDir = path.join(getHomeDir(), '.mcp-auth');
+  if (fs.existsSync(mcpAuthDir)) {
+    mounts.push({
+      hostPath: mcpAuthDir,
+      containerPath: '/home/node/.mcp-auth',
+      readonly: false,  // mcp-remote needs write access for token refresh
+    });
+  }
+
   // Additional mounts validated against external allowlist
   if (config.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
