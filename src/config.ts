@@ -12,7 +12,7 @@ export const ASSISTANT_NAME =
 export const OWNER_CHAT_JID =
   process.env.OWNER_CHAT_JID || envConfig.OWNER_CHAT_JID || '';
 export const AGENT_MODEL =
-  process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929';
+  process.env.AGENT_MODEL || 'claude-sonnet-4-6';
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts

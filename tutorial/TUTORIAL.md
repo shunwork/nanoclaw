@@ -405,7 +405,7 @@ sequenceDiagram
 |------|--------|------|
 | `ASSISTANT_NAME` | `'Cal'` | 助理名稱 |
 | `OWNER_CHAT_JID` | — (必填) | Owner 的 Telegram Chat ID |
-| `AGENT_MODEL` | `'claude-sonnet-4-5-20250929'` | Claude 模型 |
+| `AGENT_MODEL` | `'claude-sonnet-4-6'` | Claude 模型 |
 | `CONTAINER_TIMEOUT` | `1800000` ms (30 分鐘) | 容器執行超時 |
 | `IDLE_TIMEOUT` | `1800000` ms (30 分鐘) | 閒置超時（關閉容器） |
 | `MAX_CONCURRENT_CONTAINERS` | `5` | 最大同時容器數 |
@@ -1666,7 +1666,7 @@ graph LR
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude OAuth Token | — (*或 API Key) |
 | `ANTHROPIC_API_KEY` | Anthropic API Key | — (*或 OAuth) |
 | `ASSISTANT_NAME` | 助理名稱 | `Cal` |
-| `AGENT_MODEL` | Claude 模型 | `claude-sonnet-4-5-20250929` |
+| `AGENT_MODEL` | Claude 模型 | `claude-sonnet-4-6` |
 | `CONTAINER_IMAGE` | 容器映像 | `nanoclaw-agent:latest` |
 | `CONTAINER_TIMEOUT` | 容器超時 | `1800000` (30 分鐘) |
 | `IDLE_TIMEOUT` | 閒置超時 | `1800000` (30 分鐘) |

@@ -11,7 +11,7 @@ Change the Claude model that NanoClaw agents use by default.
 
 Ask the user which model they want using `AskUserQuestion`:
 
-- **Claude Sonnet 4.5** (Recommended) — Best balance of speed and capability. Model ID: `claude-sonnet-4-5-20250929`
+- **Claude Sonnet 4.6** (Recommended) — Best balance of speed and capability. Model ID: `claude-sonnet-4-6`
 - **Claude Opus 4.6** — Most capable, slower and more expensive. Model ID: `claude-opus-4-6`
 - **Claude Haiku 4.5** — Fastest and cheapest, less capable. Model ID: `claude-haiku-4-5-20251001`
 
@@ -24,7 +24,7 @@ The model is controlled by the `AGENT_MODEL` environment variable, which the hos
 Just set the env var in `.env`:
 
 ```
-AGENT_MODEL=claude-sonnet-4-5-20250929
+AGENT_MODEL=claude-sonnet-4-6
 ```
 
 Then restart the service:
@@ -41,7 +41,7 @@ Three files need changes:
 
 1. **`src/config.ts`** — Add the env var:
    ```typescript
-   export const AGENT_MODEL = process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929';
+   export const AGENT_MODEL = process.env.AGENT_MODEL || 'claude-sonnet-4-6';
    ```
 
 2. **`src/container-runner.ts`** — Import `AGENT_MODEL` from config, then pass it to the container in `buildContainerArgs()`:
@@ -51,7 +51,7 @@ Three files need changes:
 
 3. **`container/agent-runner/src/index.ts`** — Read from env in the `query()` call:
    ```typescript
-   model: process.env.AGENT_MODEL || 'claude-sonnet-4-5-20250929',
+   model: process.env.AGENT_MODEL || 'claude-sonnet-4-6',
    ```
 
 Then build and rebuild:
@@ -73,4 +73,4 @@ The agent should complete successfully. Model choice affects response speed and 
 
 ## Reverting to Default
 
-Remove `AGENT_MODEL` from `.env` (or set it to `claude-sonnet-4-5-20250929`) and restart the service.
+Remove `AGENT_MODEL` from `.env` (or set it to `claude-sonnet-4-6`) and restart the service.

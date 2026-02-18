@@ -118,7 +118,7 @@ docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, SDK_DEEP_DIVE
 
 ## Container Agent Configuration
 
-The agent runs the model specified by `AGENT_MODEL` env var (default: `claude-sonnet-4-5-20250929`) with these settings (in `container/agent-runner/src/index.ts`):
+The agent runs the model specified by `AGENT_MODEL` env var (default: `claude-sonnet-4-6`) with these settings (in `container/agent-runner/src/index.ts`):
 
 - **allowedTools**: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebSearch`, `WebFetch`, `Task`, `TaskOutput`, `TaskStop`, `TeamCreate`, `TeamDelete`, `SendMessage`, `TodoWrite`, `ToolSearch`, `Skill`, `NotebookEdit`, `mcp__nanoclaw__*`
 - **permissionMode**: `bypassPermissions` (sandboxed in Docker container)
@@ -176,7 +176,7 @@ sessions (group_folder TEXT PK, session_id TEXT)
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram Bot API token |
 | `OWNER_CHAT_JID` | Yes | — | Owner's Telegram chat ID |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Yes* | — | Auth for Agent SDK (*or `ANTHROPIC_API_KEY`) |
-| `AGENT_MODEL` | No | `claude-sonnet-4-5-20250929` | Claude model for agents |
+| `AGENT_MODEL` | No | `claude-sonnet-4-6` | Claude model for agents |
 | `ASSISTANT_NAME` | No | `Cal` | Bot display name in messages |
 | `CONTAINER_IMAGE` | No | `nanoclaw-agent:latest` | Container image name |
 | `CONTAINER_TIMEOUT` | No | `1800000` | Container timeout (ms, 30 min) |
