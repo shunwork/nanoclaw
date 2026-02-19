@@ -1,189 +1,250 @@
-# Skill: server-migration
+---
+name: server-migration
+description: Migrate NanoClaw to a new Mac. Two modes - export packs everything into a zip on the source machine, import unpacks and configures on the target. Triggers on migrate, server migration, export nanoclaw, import nanoclaw.
+---
 
-Interactive guide for migrating NanoClaw to a new server or machine.
+# Server Migration
 
-## When to Use
+Migrate NanoClaw between Macs via a single zip file.
 
-- User wants to move NanoClaw to a new machine, VPS, or server
-- User says "migrate", "transfer to new server", "move to VPS", "server migration"
-- User is setting up a backup deployment
+## Usage
 
-## How to Run
+- `/server-migration export` — Run on **source** machine. Stops service, packs code + data into a zip.
+- `/server-migration import` — Run on **target** machine. Unpacks zip, installs deps, configures service.
 
-This is an interactive skill. Follow these steps in order:
+---
 
-### Step 1: Gather Target Info
+## Export (Source Machine)
 
-Use `AskUserQuestion` to ask:
-
-1. **Target OS**: macOS / Ubuntu/Debian / Other Linux
-2. **Connection**: SSH access info (user@host) or local setup
-3. **Install path**: Where to clone the repo on the target (default: `~/Projects/nanoclaw`)
-
-### Step 2: Migration Scope
-
-Use `AskUserQuestion` to ask:
-
-1. **Scope**: Essential only (DB + sessions + credentials) vs Full (includes logs, conversations, AgentBrain)
-
-**Essential data** (always migrated):
-| Data | Path | Purpose |
-|------|------|---------|
-| SQLite DB | `store/messages.db` | Messages, tasks, sessions |
-| Agent sessions | `data/sessions/main/.claude/` | Conversation continuity |
-| Credentials | `.env` | Bot token, API keys |
-| Agent config | `groups/main/CLAUDE.md` | Agent personality & instructions |
-| Agent skills | `groups/main/.claude/skills/` | Custom agent skills |
-
-**Full data** (optional, adds):
-| Data | Path | Purpose |
-|------|------|---------|
-| AgentBrain | `AgentBrain/` | Memory vault, personality |
-| Container logs | `groups/main/logs/` | Historical run logs |
-| Conversations | `groups/main/conversations/` | Archived transcripts |
-
-### Step 3: Pre-Migration Checklist
-
-Generate and display these checks for the user to run on the **source** machine:
+### Step 1: Stop the service
 
 ```bash
-# 1. Stop the service first
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist  # macOS
-# or: systemctl --user stop nanoclaw                        # Linux
-
-# 2. Check for running containers
-docker ps --filter name=nanoclaw-
-
-# 3. Check for uncommitted changes
-cd /path/to/nanoclaw && git status
-
-# 4. Check data sizes
-du -sh store/messages.db data/sessions/ AgentBrain/ groups/main/logs/ groups/main/conversations/
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist 2>/dev/null
+docker ps --filter name=nanoclaw- -q | xargs -r docker stop
 ```
 
-### Step 4: Generate Transfer Commands
+Wait for both to complete. Warn the user: "Service stopped. Bot will not respond until import is complete on the target."
 
-Based on the answers, generate rsync commands. Example for essential migration:
+### Step 2: Create the export zip
+
+The zip includes the **full project source** (excluding `node_modules`, `dist`, build artifacts) plus all stateful data and home-directory configs. Run from the project root (`process.cwd()`).
 
 ```bash
-# From source machine — adjust paths as needed
-TARGET="user@host:/path/to/nanoclaw"
+EXPORT_FILE="$HOME/nanoclaw-export-$(date +%Y%m%d).zip"
 
-# Clone repo on target first (run on target)
-ssh user@host "cd /path/to && git clone https://github.com/user/nanoclaw.git && cd nanoclaw && git checkout feature/mysetting"
+# Project source + data (exclude build artifacts, node_modules, .git internals)
+zip -r "$EXPORT_FILE" . \
+  -x "node_modules/*" \
+  -x "dist/*" \
+  -x "container/agent-runner/node_modules/*" \
+  -x "container/agent-runner/dist/*" \
+  -x ".git/*" \
+  -x "AgentBrain/.git/*" \
+  -x "data/ipc/*" \
+  -x "logs/*"
 
-# Transfer essential data
-rsync -avz --progress store/messages.db ${TARGET}/store/
-rsync -avz --progress data/sessions/main/ ${TARGET}/data/sessions/main/
-rsync -avz --progress groups/main/CLAUDE.md ${TARGET}/groups/main/
-rsync -avz --progress groups/main/.claude/ ${TARGET}/groups/main/.claude/
+# Heptabase OAuth tokens (outside project)
+if [ -d "$HOME/.mcp-auth" ]; then
+  (cd "$HOME" && zip -ur "$EXPORT_FILE" .mcp-auth/)
+fi
 
-# Transfer .env (SECURITY: uses SSH, but verify target is secure)
-rsync -avz --progress .env ${TARGET}/
+# Mount allowlist (outside project)
+if [ -f "$HOME/.config/nanoclaw/mount-allowlist.json" ]; then
+  (cd "$HOME" && zip -ur "$EXPORT_FILE" .config/nanoclaw/mount-allowlist.json)
+fi
 ```
 
-For full migration, add:
+### Step 3: Show result
+
+Report the file path and size. Tell the user:
+
+> Export complete: `<path>` (<size>)
+>
+> Transfer this file to the target Mac (AirDrop, USB, scp, etc.), then run `/server-migration import` with Claude Code on the target.
+>
+> **This file contains secrets (API keys, bot tokens). Delete it after import.**
+
+### Step 4: Restart source (optional)
+
+Ask the user: "Restart the bot on this machine, or leave it stopped for cutover?"
+
+If restart:
 ```bash
-rsync -avz --progress AgentBrain/ ${TARGET}/AgentBrain/
-rsync -avz --progress groups/main/logs/ ${TARGET}/groups/main/logs/
-rsync -avz --progress groups/main/conversations/ ${TARGET}/groups/main/conversations/
-```
-
-**IMPORTANT**: Warn the user that `.env` contains secrets. Verify target machine security before transferring.
-
-### Step 5: Target Setup Commands
-
-Generate OS-specific setup commands for the target:
-
-#### Common (all OS):
-```bash
-cd /path/to/nanoclaw
-
-# Install dependencies
-npm install
-
-# Build host
-npm run build
-
-# Build container
-cd container && npm install && npm run build && cd ..
-./container/build.sh
-
-# Create required directories
-mkdir -p data/ipc/main/{messages,tasks} data/env data/sessions/main/.claude store groups/main/logs
-```
-
-#### macOS (launchd):
-```bash
-# Create plist (adjust paths in the template)
-cp docs/com.nanoclaw.plist ~/Library/LaunchAgents/
-# Edit the plist to set correct paths and environment
-nano ~/Library/LaunchAgents/com.nanoclaw.plist
-
-# Load and start
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
 
-#### Linux (systemd):
+---
+
+## Import (Target Machine)
+
+### Step 1: Ask for the zip path
+
+Use `AskUserQuestion`: "Where is the export zip file?" with a text input. Default: `~/nanoclaw-export-*.zip`
+
+### Step 2: Choose restore method
+
+Use `AskUserQuestion`:
+
+- **From zip (Recommended)** — Restore project directly from the export zip. Fastest, no internet needed.
+- **From GitHub** — Clone fresh from `https://github.com/shunwork/nanoclaw.git` and overlay data from zip. Use this if you want a clean git history on the target.
+
+### Step 3a: Restore from zip
+
+Ask the user for the target directory. Default: `~/Projects/nanoclaw`
+
 ```bash
-# Create systemd user service
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/nanoclaw.service << 'EOF'
-[Unit]
-Description=NanoClaw Telegram Bot
-After=network.target docker.service
+mkdir -p <target_dir>
+cd <target_dir>
 
-[Service]
-Type=simple
-WorkingDirectory=/path/to/nanoclaw
-ExecStart=/usr/bin/node dist/index.js
-Restart=on-failure
-RestartSec=10
-EnvironmentFile=/path/to/nanoclaw/.env
+# Unpack everything
+unzip -o <zip_path> -d .
 
-[Install]
-WantedBy=default.target
-EOF
+# Unpack home-relative files (.mcp-auth, .config/nanoclaw)
+unzip -o <zip_path> '.mcp-auth/*' -d "$HOME" 2>/dev/null
+unzip -o <zip_path> '.config/*' -d "$HOME" 2>/dev/null
 
-systemctl --user daemon-reload
-systemctl --user enable nanoclaw
-systemctl --user start nanoclaw
+# Re-initialize git (the .git dir was excluded from export)
+git init
+git remote add origin https://github.com/shunwork/nanoclaw.git
+git fetch origin
+git checkout -b feature/myclaw-v2
+git add -A && git commit -m "Import from migration export"
+
+# Initialize AgentBrain submodule
+git submodule update --init --recursive
 ```
 
-### Step 6: Verification
-
-Generate verification commands:
+### Step 3b: Restore from GitHub
 
 ```bash
-# Check service is running
-# macOS:
+cd ~/Projects  # or user's chosen location
+git clone https://github.com/shunwork/nanoclaw.git
+cd nanoclaw
+git checkout feature/myclaw-v2
+git submodule update --init --recursive
+
+# Overlay data from zip (overwrites repo defaults with exported state)
+unzip -o <zip_path> \
+  '.env' \
+  'store/*' \
+  'data/sessions/*' \
+  'groups/*' \
+  'AgentBrain/*' \
+  -d .
+
+# Unpack home-relative files
+unzip -o <zip_path> '.mcp-auth/*' -d "$HOME" 2>/dev/null
+unzip -o <zip_path> '.config/*' -d "$HOME" 2>/dev/null
+```
+
+### Step 4: Create required directories
+
+```bash
+mkdir -p store logs data/ipc/main/{messages,tasks,input} data/sessions/main/.claude
+```
+
+### Step 5: Install and build
+
+```bash
+# Host
+npm install && npm run build
+
+# Container agent-runner
+cd container && npm install && npm run build && cd ..
+
+# Container image (takes a few minutes)
+./container/build.sh
+```
+
+### Step 6: Configure launchd
+
+Generate the plist with correct paths for this machine:
+
+```bash
+NODE_PATH=$(which node)
+PROJECT_DIR=$(pwd)
+
+cat > ~/Library/LaunchAgents/com.nanoclaw.plist << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NODE_PATH}</string>
+        <string>--env-file=.env</string>
+        <string>${PROJECT_DIR}/dist/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${PROJECT_DIR}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:${HOME}/.local/bin</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${PROJECT_DIR}/logs/nanoclaw.log</string>
+    <key>StandardErrorPath</key>
+    <string>${PROJECT_DIR}/logs/nanoclaw.error.log</string>
+</dict>
+</plist>
+PLIST
+```
+
+### Step 7: Re-authorize Heptabase (if needed)
+
+Check if the OAuth tokens work by testing mcp-remote:
+```bash
+timeout 10 npx mcp-remote@latest https://api.heptabase.com/mcp --transport http-only 2>&1 | head -5
+```
+
+If the output shows an auth error, re-authorize:
+```bash
+npx -y mcp-remote@latest https://api.heptabase.com/mcp --transport http-only
+```
+
+Complete the OAuth flow in the browser. No code changes needed.
+
+### Step 8: Start and verify
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+sleep 3
 launchctl list | grep nanoclaw
-# Linux:
-systemctl --user status nanoclaw
-
-# Check logs
-tail -f logs/nanoclaw.log
-
-# Check Docker
-docker ps --filter name=nanoclaw-
-
-# Send a test message to the bot on Telegram
-# Verify response arrives
 ```
 
-### Step 7: Cutover Guidance
+Tell the user to send a test message to the Telegram bot.
 
-Display:
+Check logs if there are issues:
+```bash
+tail -20 logs/nanoclaw.log
+ls -t groups/main/logs/container-*.log | head -1 | xargs tail -30
+```
 
-1. **Stop source service** — prevent duplicate responses
-2. **Final sync** — run rsync one more time to catch last messages
-3. **Start target service** — verify it responds
-4. **DNS/proxy** — if using a webhook (not applicable for long polling, but note it)
-5. **Keep source as backup** — don't delete source data for at least a week
+### Step 9: Cleanup reminder
+
+Tell the user:
+
+> Migration complete. Remember to:
+> 1. Stop the bot on the old machine (`launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist`)
+> 2. Delete the export zip (it contains secrets)
+> 3. Keep old machine data as backup for at least a week
+
+---
 
 ## Notes
 
-- NanoClaw uses Telegram long polling, so no DNS/webhook changes needed — just stop source, start target
-- SQLite DB should be copied while the service is stopped to avoid corruption
-- Session continuity depends on `data/sessions/main/.claude/` — without it, the agent starts a fresh conversation
-- AgentBrain memory is in `AgentBrain/` submodule — `git submodule update --init` on target if needed
+- Telegram uses long polling — no DNS/webhook changes needed. Just stop source, start target.
+- Only one instance should run at a time to avoid duplicate responses.
+- SQLite DB must be copied while the service is stopped to avoid corruption.
+- `CLAUDE_CODE_OAUTH_TOKEN` in `.env` is tied to your Anthropic account, not the machine — it works on both.
+- AgentBrain is a git submodule. The export includes the working tree; `git submodule update --init` may be needed if the `.git` reference is broken.
+- Prerequisites on target: Node.js 22+, Docker (OrbStack recommended), Git.
