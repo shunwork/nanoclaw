@@ -56,6 +56,7 @@ interface SDKUserMessage {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_RESET_SESSION_SENTINEL = path.join(IPC_INPUT_DIR, '_reset_session');
 const IPC_POLL_MS = 500;
 
 /**
@@ -294,6 +295,17 @@ function shouldClose(): boolean {
 }
 
 /**
+ * Check for _reset_session sentinel (written by MCP new_session handler).
+ */
+function shouldResetSession(): boolean {
+  if (fs.existsSync(IPC_RESET_SESSION_SENTINEL)) {
+    try { fs.unlinkSync(IPC_RESET_SESSION_SENTINEL); } catch { /* ignore */ }
+    return true;
+  }
+  return false;
+}
+
+/**
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
@@ -494,18 +506,28 @@ async function runQuery(
   resumeAt: string | undefined,
   knownUuids: Set<string>,
   queryNumber: number,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; resetRequested: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
-  // Poll IPC for follow-up messages and _close sentinel during the query
+  // Poll IPC for follow-up messages, _close sentinel, and _reset_session sentinel
   let ipcPolling = true;
   let closedDuringQuery = false;
+  let resetRequested = false;
   const pollIpcDuringQuery = () => {
     if (!ipcPolling) return;
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
+      stream.end();
+      ipcPolling = false;
+      return;
+    }
+    if (!resetRequested && shouldResetSession()) {
+      log('Session reset sentinel detected during query, ending stream for new session');
+      resetRequested = true;
+      // End the stream so the current query finishes after processing buffered messages.
+      // Any new IPC messages will be picked up by the main loop as the next prompt.
       stream.end();
       ipcPolling = false;
       return;
@@ -672,8 +694,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query Q${queryNumber} done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  log(`Query Q${queryNumber} done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}, resetRequested: ${resetRequested}`);
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, resetRequested };
 }
 
 async function main(): Promise<void> {
@@ -707,8 +729,9 @@ async function main(): Promise<void> {
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale _close sentinel from previous container runs
+  // Clean up stale sentinels from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try { fs.unlinkSync(IPC_RESET_SESSION_SENTINEL); } catch { /* ignore */ }
 
   // Load known UUIDs from transcript for replay detection (shared across queries)
   const knownUuids = loadKnownUuids(sessionId);
@@ -756,6 +779,15 @@ async function main(): Promise<void> {
         break;
       }
 
+      // Handle session reset: clear state so next query starts a fresh session
+      let pendingReset = queryResult.resetRequested;
+      if (pendingReset) {
+        log('Session reset: clearing sessionId, resumeAt, knownUuids');
+        sessionId = undefined;
+        resumeAt = undefined;
+        knownUuids.clear();
+      }
+
       log('Query ended, waiting for next IPC message...');
 
       // Wait for the next message or _close sentinel
@@ -765,8 +797,26 @@ async function main(): Promise<void> {
         break;
       }
 
+      // Check for reset sentinel that arrived while waiting between queries
+      if (!pendingReset && shouldResetSession()) {
+        log('Session reset detected between queries: clearing sessionId, resumeAt, knownUuids');
+        sessionId = undefined;
+        resumeAt = undefined;
+        knownUuids.clear();
+        pendingReset = true;
+      }
+
       log(`Got new message (${nextMessage.length} chars), starting new query`);
       prompt = nextMessage;
+
+      // Inject volatile context for the new session (same as container startup)
+      if (pendingReset) {
+        const volatileContext = loadVolatileContext();
+        if (volatileContext) {
+          log(`Volatile context loaded for new session: ${volatileContext.length} chars`);
+          prompt = `${volatileContext}\n\n${prompt}`;
+        }
+      }
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

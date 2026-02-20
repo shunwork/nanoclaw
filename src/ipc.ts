@@ -15,6 +15,7 @@ import { stripInternalTags } from './router.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  onSessionReset?: (folder: string) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -72,7 +73,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
         const filePath = path.join(tasksDir, file);
         try {
           const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          await processTaskIpc(data);
+          await processTaskIpc(data, deps);
           fs.unlinkSync(filePath);
         } catch (err) {
           logger.error({ file, err }, 'Error processing IPC task');
@@ -92,7 +93,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started');
 }
 
-async function processTaskIpc(
+export async function processTaskIpc(
   data: {
     type: string;
     taskId?: string;
@@ -103,11 +104,13 @@ async function processTaskIpc(
     targetJid?: string;
     groupFolder?: string;
   },
+  deps: IpcDeps,
 ): Promise<void> {
   switch (data.type) {
     case 'new_session': {
       const folder = data.groupFolder || 'main';
       setSession(folder, '');
+      deps.onSessionReset?.(folder);
       logger.info({ folder }, 'Session reset via IPC');
       break;
     }

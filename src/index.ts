@@ -180,13 +180,21 @@ async function runAgent(
     })),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID from streamed results.
+  // Skip updates that would restore a session ID that was already reset via IPC.
+  const initialSessionId = sessionId;
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[ownerConfig.folder] = output.newSessionId;
-          setSession(ownerConfig.folder, output.newSessionId);
-          logger.info({ folder: ownerConfig.folder, sessionId: output.newSessionId }, 'Session updated');
+          const currentSession = sessions[ownerConfig.folder];
+          // If session was reset (cleared to '') but container still reports the old ID, skip
+          if (currentSession === '' && output.newSessionId === initialSessionId) {
+            logger.debug({ folder: ownerConfig.folder, sessionId: output.newSessionId }, 'Skipping session update (session was reset)');
+          } else {
+            sessions[ownerConfig.folder] = output.newSessionId;
+            setSession(ownerConfig.folder, output.newSessionId);
+            logger.info({ folder: ownerConfig.folder, sessionId: output.newSessionId }, 'Session updated');
+          }
         }
         await onOutput(output);
       }
@@ -206,8 +214,11 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[ownerConfig.folder] = output.newSessionId;
-      setSession(ownerConfig.folder, output.newSessionId);
+      const currentSession = sessions[ownerConfig.folder];
+      if (!(currentSession === '' && output.newSessionId === initialSessionId)) {
+        sessions[ownerConfig.folder] = output.newSessionId;
+        setSession(ownerConfig.folder, output.newSessionId);
+      }
     }
 
     if (output.status === 'error') {
@@ -369,6 +380,7 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => channel.sendMessage(jid, text),
+    onSessionReset: (folder) => { sessions[folder] = ''; },
   });
   queue.setProcessMessagesFn(processMessages);
   recoverPendingMessages();

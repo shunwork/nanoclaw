@@ -94,6 +94,11 @@ data/ipc/main/              IPC files: messages/, tasks/, input/ (ephemeral)
 data/sessions/main/.claude/ Agent SDK session transcripts
 data/env/                   (Legacy — secrets now passed via stdin JSON)
 
+tests/                      Integration and unit tests (vitest)
+  message-pipeline.test.ts  User message → Telegram reply pipeline
+  group-queue.test.ts       Queue concurrency, retry, priority
+  session-reset.test.ts     IPC new_session and wrappedOnOutput logic
+
 .claude/skills/             Claude Code skills (for development, NOT for container agent)
 docs/                       REQUIREMENTS.md, SECURITY.md, SPEC.md, SDK_DEEP_DIVE.md, DEBUG_CHECKLIST.md, message-system-design.md
 ```
@@ -240,6 +245,7 @@ Run commands directly — don't tell the user to run them.
 npm run dev          # Run with hot reload (tsx)
 npm run build        # Compile TypeScript to dist/
 npm run typecheck    # Type check without emit
+npm run test         # Run unit/integration tests (vitest)
 npm run format       # Prettier format
 
 # Container
@@ -251,8 +257,15 @@ launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
 ```
 
-After changes to host code: `npm run build` then restart service.
-After changes to container code or Dockerfile: rebuild container image then restart service.
+### Change workflow
+
+Always follow this order before restarting the service:
+
+1. **Typecheck**: `npm run typecheck` (and `cd container/agent-runner && npx tsc --noEmit` if container code changed)
+2. **Test**: `npm test` — all tests must pass
+3. **Build**: `npm run build` (and `cd container && npm run build && cd .. && ./container/build.sh` if container code changed)
+4. **Restart**: `launchctl unload` + `launchctl load`
+
 After changes to `groups/main/CLAUDE.md`: no rebuild needed (mounted live).
 
 ## Common Patterns

@@ -8,15 +8,15 @@
  * implementations.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { ContainerOutput } from './container-runner.js';
-import type { NewMessage } from './types.js';
+import type { ContainerOutput } from '../src/container-runner.js';
+import type { NewMessage } from '../src/types.js';
 
 // --- Mocks ---
 
 const CHAT_JID = '12345';
 const BOT_NAME = 'TestBot';
 
-vi.mock('./config.js', () => ({
+vi.mock('../src/config.js', () => ({
   OWNER_CHAT_JID: '12345',
   ASSISTANT_NAME: 'TestBot',
   DATA_DIR: '/tmp/nanoclaw-test',
@@ -48,7 +48,7 @@ let mockContainerBehavior: (
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ) => Promise<ContainerOutput>;
 
-vi.mock('./container-runner.js', () => ({
+vi.mock('../src/container-runner.js', () => ({
   runContainerAgent: vi.fn(async (
     _config: unknown,
     _input: unknown,
@@ -61,7 +61,7 @@ vi.mock('./container-runner.js', () => ({
 }));
 
 // Mock logger to suppress output
-vi.mock('./logger.js', () => ({
+vi.mock('../src/logger.js', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -76,8 +76,8 @@ import {
   storeChatMetadata,
   storeMessage,
   getMessagesSince,
-} from './db.js';
-import { formatMessages, stripInternalTags } from './router.js';
+} from '../src/db.js';
+import { formatMessages, stripInternalTags } from '../src/router.js';
 
 // --- Pipeline under test ---
 
@@ -101,7 +101,7 @@ async function processMessages(
   sentMessages: string[];
   sessionUpdated: string | undefined;
 }> {
-  const { runContainerAgent } = await import('./container-runner.js');
+  const { runContainerAgent } = await import('../src/container-runner.js');
 
   const missedMessages = getMessagesSince(chatJid, lastAgentTimestamp, BOT_NAME);
   if (missedMessages.length === 0) {
@@ -362,7 +362,7 @@ describe('message pipeline: user message → Telegram reply', () => {
 
     mockContainerBehavior = async (onOutput) => {
       // Verify prompt content via the mock
-      const { runContainerAgent } = await import('./container-runner.js');
+      const { runContainerAgent } = await import('../src/container-runner.js');
       const calls = vi.mocked(runContainerAgent).mock.calls;
       const prompt = (calls[calls.length - 1][1] as any).prompt;
 
@@ -402,7 +402,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     storeMessage(makeMessage('使用者第二則', '2026-02-17T10:08:02.000Z'));
 
     mockContainerBehavior = async (onOutput) => {
-      const { runContainerAgent } = await import('./container-runner.js');
+      const { runContainerAgent } = await import('../src/container-runner.js');
       const calls = vi.mocked(runContainerAgent).mock.calls;
       const prompt = (calls[calls.length - 1][1] as any).prompt;
 

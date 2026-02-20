@@ -14,6 +14,8 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
+const RESET_SESSION_SENTINEL = path.join(IPC_INPUT_DIR, '_reset_session');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -236,6 +238,10 @@ server.tool(
       groupFolder,
       timestamp: new Date().toISOString(),
     });
+
+    // Write sentinel so the agent-runner's poll loop detects the reset
+    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
+    fs.writeFileSync(RESET_SESSION_SENTINEL, '');
 
     return { content: [{ type: 'text' as const, text: 'Session reset requested. New session starts on next message.' }] };
   },
