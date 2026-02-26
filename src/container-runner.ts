@@ -281,14 +281,18 @@ export async function runContainerAgent(
       const chunk = data.toString();
 
       if (!stdoutTruncated) {
-        const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
-        if (chunk.length > remaining) {
-          stdout += chunk.slice(0, remaining);
-          stdoutTruncated = true;
-          logger.warn(
-            { size: stdout.length },
-            'Container stdout truncated due to size limit',
-          );
+        if (CONTAINER_MAX_OUTPUT_SIZE > 0) {
+          const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
+          if (chunk.length > remaining) {
+            stdout += chunk.slice(0, remaining);
+            stdoutTruncated = true;
+            logger.warn(
+              { size: stdout.length },
+              'Container stdout truncated due to size limit',
+            );
+          } else {
+            stdout += chunk;
+          }
         } else {
           stdout += chunk;
         }
@@ -337,17 +341,22 @@ export async function runContainerAgent(
         fs.appendFileSync(logFile, chunk);
       } catch { /* ignore write errors */ }
 
-      if (stderrTruncated) return;
-      const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
-      if (chunk.length > remaining) {
-        stderr += chunk.slice(0, remaining);
-        stderrTruncated = true;
-        logger.warn(
-          { size: stderr.length },
-          'Container stderr truncated due to size limit',
-        );
-      } else {
-        stderr += chunk;
+      if (!stderrTruncated) {
+        if (CONTAINER_MAX_OUTPUT_SIZE > 0) {
+          const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
+          if (chunk.length > remaining) {
+            stderr += chunk.slice(0, remaining);
+            stderrTruncated = true;
+            logger.warn(
+              { size: stderr.length },
+              'Container stderr truncated due to size limit',
+            );
+          } else {
+            stderr += chunk;
+          }
+        } else {
+          stderr += chunk;
+        }
       }
     });
 

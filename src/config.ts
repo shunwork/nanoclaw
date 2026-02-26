@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'OWNER_CHAT_JID',
   'TELEGRAM_BOT_TOKEN',
+  'CONTAINER_MAX_OUTPUT_SIZE',
 ]);
 
 export const ASSISTANT_NAME =
@@ -47,9 +48,9 @@ export const CONTAINER_TIMEOUT = parseInt(
   10,
 );
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
-  process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
+  process.env.CONTAINER_MAX_OUTPUT_SIZE || envConfig.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,
-); // 10MB default
+); // 10MB default; set to 0 in .env to disable truncation
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(
   process.env.IDLE_TIMEOUT || '1800000',

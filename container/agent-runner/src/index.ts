@@ -297,7 +297,7 @@ async function runQuery(
       const text = extractAssistantText(message);
       if (text) {
         lastAssistantText = text;
-        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… text=${text.slice(0, 100)}… (${text.length} chars)`);
+        log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… text=${text}`);
       } else {
         logToolUseBlocks(message, queryNumber, messageCount, uuid);
       }
@@ -331,7 +331,7 @@ async function runQuery(
       const outputText = textResult || lastAssistantText || null;
       const source = textResult ? 'result' : lastAssistantText ? 'assistant-fallback' : 'none';
 
-      log(`[Q${queryNumber} result#${resultCount}] source=${source} text=${(outputText || '(null)').slice(0, 200)} (${outputText?.length || 0} chars)`);
+      log(`[Q${queryNumber} result#${resultCount}] source=${source} text=${outputText || '(null)'}`);
 
       writeOutput({
         status: 'success',
