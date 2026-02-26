@@ -12,8 +12,8 @@ import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
-  writeTasksSnapshot,
 } from './container-runner.js';
+import { createIdleTimer } from './idle-timer.js';
 import {
   getAllSessions,
   getAllTasks,
@@ -29,11 +29,9 @@ import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
 import { formatMessages, formatOutbound, stripInternalTags } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
+import { writeTasksSnapshot } from './task-utils.js';
 import { OwnerConfig } from './types.js';
 import { logger } from './logger.js';
-
-// Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
 
 let lastAgentTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -95,16 +93,7 @@ async function processMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const resetIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug('Idle timeout, closing container stdin');
-      queue.closeStdin(chatJid);
-    }, IDLE_TIMEOUT);
-  };
+  const idleTimer = createIdleTimer(queue, chatJid, IDLE_TIMEOUT);
 
   await channel.setTyping(chatJid, true);
   let hadError = false;
@@ -122,7 +111,7 @@ async function processMessages(chatJid: string): Promise<boolean> {
         await channel.setTyping(chatJid, false);
         outputSentToUser = true;
         lastResponsePreview = text.slice(0, 200).replace(/\n/g, ' ');
-        resetIdleTimer();
+        idleTimer.reset();
       }
     }
 
@@ -132,7 +121,7 @@ async function processMessages(chatJid: string): Promise<boolean> {
   });
 
   await channel.setTyping(chatJid, false);
-  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer.clear();
 
   logger.info({
     promptPreview: prompt.slice(0, 200).replace(/\n/g, ' '),
@@ -166,19 +155,7 @@ async function runAgent(
   const sessionId = sessions[ownerConfig.folder];
 
   // Update tasks snapshot for container to read
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    ownerConfig.folder,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
+  writeTasksSnapshot(ownerConfig.folder, getAllTasks());
 
   // Wrap onOutput to track session ID from streamed results.
   // Skip updates that would restore a session ID that was already reset via IPC.
@@ -208,6 +185,7 @@ async function runAgent(
         sessionId,
         groupFolder: ownerConfig.folder,
         chatJid,
+        assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, ownerConfig.folder),
       wrappedOnOutput,

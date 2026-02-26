@@ -4,7 +4,7 @@ import path from 'path';
 
 import { Bot } from 'grammy';
 
-import { ASSISTANT_NAME, MEDIA_DIR, TELEGRAM_MAX_FILE_SIZE } from '../config.js';
+import { ASSISTANT_NAME, MEDIA_DIR, TELEGRAM_BOT_TOKEN, TELEGRAM_MAX_FILE_SIZE } from '../config.js';
 import { logger } from '../logger.js';
 import { Channel, MessageAttachment, NewMessage, OnChatMetadata, OnInboundMessage } from '../types.js';
 
@@ -30,17 +30,16 @@ export class TelegramChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) {
+    if (!TELEGRAM_BOT_TOKEN) {
       throw new Error(
-        'TELEGRAM_BOT_TOKEN environment variable is required. Run /setup in Claude Code.',
+        'TELEGRAM_BOT_TOKEN is required. Set it in .env or as an environment variable. Run /setup in Claude Code.',
       );
     }
-    this.botToken = token;
+    this.botToken = TELEGRAM_BOT_TOKEN;
 
     // Force IPv4 to avoid IPv6 connectivity issues with Telegram API
     const ipv4Agent = new https.Agent({ family: 4 });
-    this.bot = new Bot(token, {
+    this.bot = new Bot(TELEGRAM_BOT_TOKEN, {
       client: { baseFetchConfig: { agent: ipv4Agent } },
     });
 

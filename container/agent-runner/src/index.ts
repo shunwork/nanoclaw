@@ -16,48 +16,33 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
-interface ContainerInput {
-  prompt: string;
-  sessionId?: string;
-  groupFolder: string;
-  chatJid: string;
-  isMain: boolean;
-  isScheduledTask?: boolean;
-  secrets?: Record<string, string>;
-}
+import { ContainerInput, ContainerOutput, SDKUserMessage } from './types.js';
+import { log } from './logging.js';
+import { loadCoreMemory, loadVolatileContext } from './memory.js';
+import { createPreCompactHook } from './transcript.js';
+import { createSanitizeBashHook } from './hooks.js';
+import {
+  IPC_INPUT_DIR,
+  IPC_INPUT_CLOSE_SENTINEL,
+  IPC_RESET_SESSION_SENTINEL,
+  IPC_POLL_MS,
+  shouldClose,
+  shouldResetSession,
+  drainIpcInput,
+  waitForIpcMessage,
+} from './ipc-input.js';
 
-interface ContainerOutput {
-  status: 'success' | 'error';
-  result: string | null;
-  newSessionId?: string;
-  error?: string;
-}
+const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
-interface SessionEntry {
-  sessionId: string;
-  fullPath: string;
-  summary: string;
-  firstPrompt: string;
+function writeOutput(output: ContainerOutput): void {
+  console.log(OUTPUT_START_MARKER);
+  console.log(JSON.stringify(output));
+  console.log(OUTPUT_END_MARKER);
 }
-
-interface SessionsIndex {
-  entries: SessionEntry[];
-}
-
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
-}
-
-const IPC_INPUT_DIR = '/workspace/ipc/input';
-const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_RESET_SESSION_SENTINEL = path.join(IPC_INPUT_DIR, '_reset_session');
-const IPC_POLL_MS = 500;
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -105,346 +90,6 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-function writeOutput(output: ContainerOutput): void {
-  console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
-  console.log(OUTPUT_END_MARKER);
-}
-
-function log(message: string): void {
-  console.error(`[agent-runner] ${message}`);
-}
-
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
-  const projectDir = path.dirname(transcriptPath);
-  const indexPath = path.join(projectDir, 'sessions-index.json');
-
-  if (!fs.existsSync(indexPath)) {
-    log(`Sessions index not found at ${indexPath}`);
-    return null;
-  }
-
-  try {
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    const entry = index.entries.find(e => e.sessionId === sessionId);
-    if (entry?.summary) {
-      return entry.summary;
-    }
-  } catch (err) {
-    log(`Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  return null;
-}
-
-/**
- * Archive the full transcript to conversations/ before compaction.
- */
-function createPreCompactHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
-    try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
-    } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    return {};
-  };
-}
-
-// Secrets to strip from Bash tool subprocess environments.
-// These are needed by claude-code for API auth but should never
-// be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
-
-function createSanitizeBashHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
-    const preInput = input as PreToolUseHookInput;
-    const command = (preInput.tool_input as { command?: string })?.command;
-    if (!command) return {};
-
-    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        updatedInput: {
-          ...(preInput.tool_input as Record<string, unknown>),
-          command: unsetPrefix + command,
-        },
-      },
-    };
-  };
-}
-
-function sanitizeFilename(summary: string): string {
-  return summary
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
-}
-
-function generateFallbackName(): string {
-  const time = new Date();
-  return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
-}
-
-interface ParsedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-function parseTranscript(content: string): ParsedMessage[] {
-  const messages: ParsedMessage[] = [];
-
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      if (entry.type === 'user' && entry.message?.content) {
-        const text = typeof entry.message.content === 'string'
-          ? entry.message.content
-          : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
-        if (text) messages.push({ role: 'user', content: text });
-      } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
-        if (text) messages.push({ role: 'assistant', content: text });
-      }
-    } catch {
-    }
-  }
-
-  return messages;
-}
-
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null): string {
-  const now = new Date();
-  const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-
-  const lines: string[] = [];
-  lines.push(`# ${title || 'Conversation'}`);
-  lines.push('');
-  lines.push(`Archived: ${formatDateTime(now)}`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-
-  for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : 'Andy';
-    const content = msg.content.length > 2000
-      ? msg.content.slice(0, 2000) + '...'
-      : msg.content;
-    lines.push(`**${sender}**: ${content}`);
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Check for _close sentinel.
- */
-function shouldClose(): boolean {
-  if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
-    return true;
-  }
-  return false;
-}
-
-/**
- * Check for _reset_session sentinel (written by MCP new_session handler).
- */
-function shouldResetSession(): boolean {
-  if (fs.existsSync(IPC_RESET_SESSION_SENTINEL)) {
-    try { fs.unlinkSync(IPC_RESET_SESSION_SENTINEL); } catch { /* ignore */ }
-    return true;
-  }
-  return false;
-}
-
-/**
- * Drain all pending IPC input messages.
- * Returns messages found, or empty array.
- */
-function drainIpcInput(): string[] {
-  try {
-    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort();
-
-    const messages: string[] = [];
-    for (const file of files) {
-      const filePath = path.join(IPC_INPUT_DIR, file);
-      try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        fs.unlinkSync(filePath);
-        if (data.type === 'message' && data.text) {
-          messages.push(data.text);
-        }
-      } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      }
-    }
-    return messages;
-  } catch (err) {
-    log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
-  }
-}
-
-/**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
- */
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
-}
-
-/**
- * Load core memory from AgentBrain vault for system prompt injection.
- * Volatile content (context.md, daily logs) is loaded separately via loadVolatileContext().
- */
-function loadCoreMemory(): string {
-  const brainDir = '/workspace/brain';
-
-  if (!fs.existsSync(brainDir)) {
-    log('AgentBrain vault not found at /workspace/brain');
-    return '';
-  }
-
-  const files = [
-    { path: 'agentmind/soul.md', tag: 'soul' },
-    { path: 'agentmind/identity.md', tag: 'identity' },
-    { path: 'memory/user.md', tag: 'user-profile' },
-    { path: 'memory/tool.md', tag: 'tool-knowledge' },
-    { path: 'memory/memory.md', tag: 'long-term-memory' },
-  ];
-
-  const sections: string[] = [];
-
-  for (const f of files) {
-    const fullPath = path.join(brainDir, f.path);
-    if (fs.existsSync(fullPath)) {
-      const content = fs.readFileSync(fullPath, 'utf-8').trim();
-      if (content) {
-        sections.push(`<${f.tag}>\n${content}\n</${f.tag}>`);
-      }
-    }
-  }
-
-  if (sections.length === 0) return '';
-  return `<agentbrain>\n${sections.join('\n\n')}\n</agentbrain>`;
-}
-
-/**
- * Load volatile context (context.md + daily logs) for injection into the first
- * user message of a new session. Not included in systemPrompt to keep it stable
- * for prompt caching. On session resume, the agent can read these files via
- * the Read tool if needed.
- */
-function loadVolatileContext(): string {
-  const brainDir = '/workspace/brain';
-
-  if (!fs.existsSync(brainDir)) return '';
-
-  const parts: string[] = [];
-
-  // Current context
-  const contextPath = path.join(brainDir, 'memory', 'context.md');
-  if (fs.existsSync(contextPath)) {
-    const content = fs.readFileSync(contextPath, 'utf-8').trim();
-    if (content) {
-      parts.push(`<context>\n${content}\n</context>`);
-    }
-  }
-
-  // Daily logs: yesterday then today (chronological order, separate tags)
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  const dailyDir = path.join(brainDir, 'memory', 'daily');
-
-  const yesterdayPath = path.join(dailyDir, `${yesterdayStr}.md`);
-  if (fs.existsSync(yesterdayPath)) {
-    const content = fs.readFileSync(yesterdayPath, 'utf-8').trim();
-    if (content) {
-      parts.push(`<yesterday_notes date="${yesterdayStr}">\n${content}\n</yesterday_notes>`);
-    }
-  }
-
-  const todayPath = path.join(dailyDir, `${todayStr}.md`);
-  if (fs.existsSync(todayPath)) {
-    const content = fs.readFileSync(todayPath, 'utf-8').trim();
-    if (content) {
-      parts.push(`<today_notes date="${todayStr}">\n${content}\n</today_notes>`);
-    }
-  }
-
-  return parts.join('\n\n');
-}
-
 /**
  * Load known UUIDs from the session transcript to detect replayed messages.
  * During session resume, the SDK replays old assistant messages. Messages with
@@ -488,6 +133,30 @@ function extractAssistantText(message: unknown): string {
 }
 
 /**
+ * Log details of an assistant message's tool use blocks.
+ */
+function logToolUseBlocks(message: unknown, queryNumber: number, messageCount: number, uuid: string): void {
+  const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
+  const toolUseBlocks = content?.filter((b) => b.type === 'tool_use') ?? [];
+  if (toolUseBlocks.length > 0) {
+    log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}…`);
+    for (const block of toolUseBlocks) {
+      const params = block.input
+        ? Object.entries(block.input)
+            .map(([k, v]) => {
+              const s = typeof v === 'string' ? v : JSON.stringify(v);
+              return `${k}: ${JSON.stringify(s.length > 80 ? s.slice(0, 80) + '…' : s)}`;
+            })
+            .join(', ')
+        : '';
+      log(`  → ${block.name || 'unknown'}${params ? ` { ${params} }` : ''}`);
+    }
+  } else {
+    log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (tool_use only)`);
+  }
+}
+
+/**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
  * allowing agent teams subagents to run to completion.
@@ -526,8 +195,6 @@ async function runQuery(
     if (!resetRequested && shouldResetSession()) {
       log('Session reset sentinel detected during query, ending stream for new session');
       resetRequested = true;
-      // End the stream so the current query finishes after processing buffered messages.
-      // Any new IPC messages will be picked up by the main loop as the next prompt.
       stream.end();
       ipcPolling = false;
       return;
@@ -548,7 +215,6 @@ async function runQuery(
   let lastAssistantText = '';
 
   // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
   const extraBase = '/workspace/extra';
   if (fs.existsSync(extraBase)) {
@@ -609,7 +275,7 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook()] }],
+        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     }
@@ -633,24 +299,7 @@ async function runQuery(
         lastAssistantText = text;
         log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… text=${text.slice(0, 100)}… (${text.length} chars)`);
       } else {
-        const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
-        const toolUseBlocks = content?.filter((b) => b.type === 'tool_use') ?? [];
-        if (toolUseBlocks.length > 0) {
-          log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}…`);
-          for (const block of toolUseBlocks) {
-            const params = block.input
-              ? Object.entries(block.input)
-                  .map(([k, v]) => {
-                    const s = typeof v === 'string' ? v : JSON.stringify(v);
-                    return `${k}: ${JSON.stringify(s.length > 80 ? s.slice(0, 80) + '…' : s)}`;
-                  })
-                  .join(', ')
-              : '';
-            log(`  → ${block.name || 'unknown'}${params ? ` { ${params} }` : ''}`);
-          }
-        } else {
-          log(`[Q${queryNumber} #${messageCount}] assistant uuid=${uuid.slice(0, 8)}… (tool_use only)`);
-        }
+        logToolUseBlocks(message, queryNumber, messageCount, uuid);
       }
       continue;
     }

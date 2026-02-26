@@ -1,26 +1,10 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { mockConfig, mockFs } from './test-helpers.js';
+
+vi.mock('../src/config.js', () => mockConfig({ MAX_CONCURRENT_CONTAINERS: 2 }));
+vi.mock('fs', () => mockFs());
 
 import { GroupQueue } from '../src/group-queue.js';
-
-// Mock config to control concurrency limit
-vi.mock('../src/config.js', () => ({
-  DATA_DIR: '/tmp/nanoclaw-test-data',
-  MAX_CONCURRENT_CONTAINERS: 2,
-}));
-
-// Mock fs operations used by sendMessage/closeStdin
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      renameSync: vi.fn(),
-    },
-  };
-});
 
 describe('GroupQueue', () => {
   let queue: GroupQueue;

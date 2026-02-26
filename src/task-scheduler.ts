@@ -1,15 +1,16 @@
 import { ChildProcess } from 'child_process';
-import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_NAME,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import { createIdleTimer } from './idle-timer.js';
+import { ContainerOutput, runContainerAgent } from './container-runner.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -20,6 +21,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { formatOutbound } from './router.js';
 import { logger } from './logger.js';
+import { computeNextRun } from './schedule-utils.js';
+import { writeTasksSnapshot } from './task-utils.js';
 import { OwnerConfig, ScheduledTask } from './types.js';
 
 export interface SchedulerDependencies {
@@ -46,19 +49,7 @@ async function runTask(
   const config = deps.ownerConfig;
 
   // Update tasks snapshot for container to read
-  const tasks = getAllTasks();
-  writeTasksSnapshot(
-    config.folder,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
+  writeTasksSnapshot(config.folder, getAllTasks());
 
   let result: string | null = null;
   let error: string | null = null;
@@ -68,16 +59,7 @@ async function runTask(
   const sessionId =
     task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
 
-  // Idle timer
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const resetIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
-      deps.queue.closeStdin(task.chat_jid);
-    }, IDLE_TIMEOUT);
-  };
+  const idleTimer = createIdleTimer(deps.queue, task.chat_jid, IDLE_TIMEOUT, `task:${task.id}`);
 
   try {
     const output = await runContainerAgent(
@@ -87,6 +69,7 @@ async function runTask(
         sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
+        assistantName: ASSISTANT_NAME,
         isScheduledTask: true,
       },
       (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
@@ -94,7 +77,7 @@ async function runTask(
         if (streamedOutput.result) {
           result = streamedOutput.result;
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          resetIdleTimer();
+          idleTimer.reset();
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
@@ -102,7 +85,7 @@ async function runTask(
       },
     );
 
-    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer.clear();
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
@@ -115,7 +98,7 @@ async function runTask(
       'Task completed',
     );
   } catch (err) {
-    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer.clear();
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
@@ -132,14 +115,16 @@ async function runTask(
   });
 
   let nextRun: string | null = null;
-  if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
-    nextRun = interval.next().toISOString();
-  } else if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    nextRun = new Date(Date.now() + ms).toISOString();
+  if (task.schedule_type === 'cron' || task.schedule_type === 'interval') {
+    try {
+      nextRun = computeNextRun(
+        task.schedule_type as 'cron' | 'interval',
+        task.schedule_value,
+        TIMEZONE,
+      );
+    } catch (err) {
+      logger.warn({ taskId: task.id, err }, 'Failed to compute next run');
+    }
   }
 
   const resultSummary = error

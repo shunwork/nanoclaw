@@ -3,14 +3,21 @@ import path from 'path';
 import { readEnvFile } from './env.js';
 
 // Read config values from .env (falls back to process.env).
-// Secrets are NOT read here — they stay on disk and are loaded only
-// where needed (container-runner.ts) to avoid leaking to child processes.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'OWNER_CHAT_JID']);
+// Secrets (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) are NOT read here —
+// they stay on disk and are loaded only where needed (container-runner.ts)
+// to avoid leaking to child processes.
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'OWNER_CHAT_JID',
+  'TELEGRAM_BOT_TOKEN',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Cal';
 export const OWNER_CHAT_JID =
   process.env.OWNER_CHAT_JID || envConfig.OWNER_CHAT_JID || '';
+export const TELEGRAM_BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
 export const AGENT_MODEL =
   process.env.AGENT_MODEL || 'claude-sonnet-4-6';
 export const SCHEDULER_POLL_INTERVAL = 60000;

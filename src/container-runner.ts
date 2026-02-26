@@ -42,6 +42,7 @@ export interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
+  assistantName: string;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
 }
@@ -518,23 +519,4 @@ export async function runContainerAgent(
       });
     });
   });
-}
-
-export function writeTasksSnapshot(
-  groupFolder: string,
-  tasks: Array<{
-    id: string;
-    groupFolder: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    status: string;
-    next_run: string | null;
-  }>,
-): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
 }

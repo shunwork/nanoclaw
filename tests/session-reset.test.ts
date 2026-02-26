@@ -13,48 +13,15 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ContainerOutput } from '../src/container-runner.js';
+import { mockConfig, mockLogger, mockFs } from './test-helpers.js';
 
 // --- Mocks ---
 
-vi.mock('../src/config.js', () => ({
-  OWNER_CHAT_JID: '12345',
-  ASSISTANT_NAME: 'TestBot',
-  DATA_DIR: '/tmp/nanoclaw-test',
-  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
-  STORE_DIR: ':memory:',
-  IDLE_TIMEOUT: 60000,
-  IPC_POLL_INTERVAL: 1000,
-  TIMEZONE: 'UTC',
-}));
-
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      appendFileSync: vi.fn(),
-      readFileSync: actual.readFileSync,
-      existsSync: actual.existsSync,
-    },
-  };
-});
-
-vi.mock('../src/container-runner.js', () => ({
-  runContainerAgent: vi.fn(),
-  writeTasksSnapshot: vi.fn(),
-}));
-
-vi.mock('../src/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+vi.mock('../src/config.js', () => mockConfig());
+vi.mock('fs', () => mockFs());
+vi.mock('../src/container-runner.js', () => ({ runContainerAgent: vi.fn() }));
+vi.mock('../src/task-utils.js', () => ({ writeTasksSnapshot: vi.fn() }));
+vi.mock('../src/logger.js', () => mockLogger());
 
 // --- Real imports (after mocks) ---
 import { _initTestDatabase, getSession, setSession } from '../src/db.js';

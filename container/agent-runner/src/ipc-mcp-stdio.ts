@@ -21,6 +21,36 @@ const RESET_SESSION_SENTINEL = path.join(IPC_INPUT_DIR, '_reset_session');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 
+/** Validate a schedule value, returning a user-facing error message or null if valid. */
+function validateScheduleValue(
+  scheduleType: 'cron' | 'interval' | 'once',
+  scheduleValue: string,
+): string | null {
+  if (scheduleType === 'cron') {
+    try {
+      CronExpressionParser.parse(scheduleValue);
+      return null;
+    } catch {
+      return `Invalid cron: "${scheduleValue}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).`;
+    }
+  }
+  if (scheduleType === 'interval') {
+    const ms = parseInt(scheduleValue, 10);
+    if (isNaN(ms) || ms <= 0) {
+      return `Invalid interval: "${scheduleValue}". Must be positive milliseconds (e.g., "300000" for 5 min).`;
+    }
+    return null;
+  }
+  if (scheduleType === 'once') {
+    const date = new Date(scheduleValue);
+    if (isNaN(date.getTime())) {
+      return `Invalid timestamp: "${scheduleValue}". Use ISO 8601 format like "2026-02-01T15:30:00.000Z".`;
+    }
+    return null;
+  }
+  return null;
+}
+
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
 
@@ -94,31 +124,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
   },
   async (args) => {
     // Validate schedule_value before writing IPC
-    if (args.schedule_type === 'cron') {
-      try {
-        CronExpressionParser.parse(args.schedule_value);
-      } catch {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'interval') {
-      const ms = parseInt(args.schedule_value, 10);
-      if (isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'once') {
-      const date = new Date(args.schedule_value);
-      if (isNaN(date.getTime())) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use ISO 8601 format like "2026-02-01T15:30:00.000Z".` }],
-          isError: true,
-        };
-      }
+    const validationError = validateScheduleValue(args.schedule_type, args.schedule_value);
+    if (validationError) {
+      return {
+        content: [{ type: 'text' as const, text: validationError }],
+        isError: true,
+      };
     }
 
     const data = {

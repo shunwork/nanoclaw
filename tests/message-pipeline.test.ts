@@ -9,41 +9,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ContainerOutput } from '../src/container-runner.js';
-import type { NewMessage } from '../src/types.js';
+import { mockConfig, mockLogger, mockFs, makeMessage, TEST_CHAT_JID, TEST_BOT_NAME } from './test-helpers.js';
 
 // --- Mocks ---
 
-const CHAT_JID = '12345';
-const BOT_NAME = 'TestBot';
-
-vi.mock('../src/config.js', () => ({
-  OWNER_CHAT_JID: '12345',
-  ASSISTANT_NAME: 'TestBot',
-  DATA_DIR: '/tmp/nanoclaw-test',
-  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
-  STORE_DIR: ':memory:', // Not used — _initTestDatabase uses in-memory
-  IDLE_TIMEOUT: 60000,
-  IPC_POLL_INTERVAL: 1000,
-}));
-
-// Mock fs to prevent real filesystem writes (container-runner, ipc use it)
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    default: {
-      ...actual,
-      mkdirSync: vi.fn(),
-      writeFileSync: vi.fn(),
-      appendFileSync: vi.fn(),
-      readFileSync: actual.readFileSync,
-      existsSync: actual.existsSync,
-    },
-  };
-});
+vi.mock('../src/config.js', () => mockConfig());
+vi.mock('fs', () => mockFs());
 
 // Mock container-runner: the ONLY real mock boundary
-// The test controls what outputs the container produces via mockContainerBehavior
 let mockContainerBehavior: (
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ) => Promise<ContainerOutput>;
@@ -57,18 +30,13 @@ vi.mock('../src/container-runner.js', () => ({
   ) => {
     return mockContainerBehavior(onOutput);
   }),
+}));
+
+vi.mock('../src/task-utils.js', () => ({
   writeTasksSnapshot: vi.fn(),
 }));
 
-// Mock logger to suppress output
-vi.mock('../src/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-}));
+vi.mock('../src/logger.js', () => mockLogger());
 
 // --- Real imports (after mocks) ---
 import {
@@ -83,12 +51,7 @@ import { formatMessages, stripInternalTags } from '../src/router.js';
 
 /**
  * Re-implements the core processMessages logic from src/index.ts.
- * Direct import of index.ts is impractical due to module-level side effects
- * (bot creation, queue init, etc.). Instead we replicate the pipeline logic
- * that matters: DB read → format → container call → output processing →
- * cursor management.
- *
- * This tests the same logic paths as the real processMessages.
+ * Direct import of index.ts is impractical due to module-level side effects.
  */
 async function processMessages(
   chatJid: string,
@@ -103,7 +66,7 @@ async function processMessages(
 }> {
   const { runContainerAgent } = await import('../src/container-runner.js');
 
-  const missedMessages = getMessagesSince(chatJid, lastAgentTimestamp, BOT_NAME);
+  const missedMessages = getMessagesSince(chatJid, lastAgentTimestamp, TEST_BOT_NAME);
   if (missedMessages.length === 0) {
     return {
       success: true,
@@ -131,9 +94,8 @@ async function processMessages(
         groupFolder: 'main',
         chatJid,
       } as any,
-      (() => {}) as any, // onProcess — not relevant to this test
+      (() => {}) as any,
       async (result: ContainerOutput) => {
-        // This mirrors the onOutput callback in src/index.ts processMessages
         if (result.newSessionId) {
           sessions['main'] = result.newSessionId;
           sessionUpdated = result.newSessionId;
@@ -163,10 +125,8 @@ async function processMessages(
     hadError = true;
   }
 
-  // Cursor rollback logic (mirrors src/index.ts)
   if (hadError) {
     if (outputSentToUser) {
-      // Error after output — don't rollback to prevent duplicate sends
       return {
         success: true,
         newCursor: cursor,
@@ -185,32 +145,12 @@ async function processMessages(
   return { success: true, newCursor: cursor, sentMessages, sessionUpdated };
 }
 
-// --- Helper ---
-
-function makeMessage(
-  content: string,
-  timestamp: string,
-  sender = 'user1',
-): NewMessage {
-  return {
-    id: `msg-${timestamp}`,
-    chat_jid: CHAT_JID,
-    sender,
-    sender_name: sender,
-    content,
-    timestamp,
-    is_from_me: false,
-    is_bot_message: false,
-  };
-}
-
 // --- Tests ---
 
 describe('message pipeline: user message → Telegram reply', () => {
   beforeEach(() => {
     _initTestDatabase();
-    // Create the chat record (FK constraint requires it before inserting messages)
-    storeChatMetadata(CHAT_JID, '2026-02-17T00:00:00.000Z', 'Test Chat');
+    storeChatMetadata(TEST_CHAT_JID, '2026-02-17T00:00:00.000Z', 'Test Chat');
   });
 
   it('normal conversation: user message → agent reply → Telegram', async () => {
@@ -226,12 +166,12 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.success).toBe(true);
     expect(r.sentMessages).toEqual(['你好嗎']);
     expect(r.sessionUpdated).toBe('sess-1');
-    expect(sendMessage).toHaveBeenCalledWith(CHAT_JID, '你好嗎');
+    expect(sendMessage).toHaveBeenCalledWith(TEST_CHAT_JID, '你好嗎');
   });
 
   it('strips <internal> tags before sending to Telegram', async () => {
@@ -246,7 +186,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.sentMessages).toEqual(['一切正常']);
   });
@@ -263,7 +203,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.success).toBe(true);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -282,7 +222,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(r.sessionUpdated).toBe('sess-2');
@@ -302,7 +242,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.sentMessages).toEqual(['第一步完成', '全部完成']);
     expect(sendMessage).toHaveBeenCalledTimes(2);
@@ -322,15 +262,10 @@ describe('message pipeline: user message → Telegram reply', () => {
 
     const sendMessage = vi.fn();
     const previousCursor = '';
-    const r = await processMessages(
-      CHAT_JID,
-      previousCursor,
-      {},
-      sendMessage,
-    );
+    const r = await processMessages(TEST_CHAT_JID, previousCursor, {}, sendMessage);
 
     expect(r.success).toBe(false);
-    expect(r.newCursor).toBe(previousCursor); // rolled back
+    expect(r.newCursor).toBe(previousCursor);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -348,10 +283,10 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
-    expect(r.success).toBe(true); // treated as success to prevent duplicate
-    expect(r.newCursor).toBe('2026-02-17T10:06:00.000Z'); // NOT rolled back
+    expect(r.success).toBe(true);
+    expect(r.newCursor).toBe('2026-02-17T10:06:00.000Z');
     expect(r.sentMessages).toEqual(['部分結果']);
   });
 
@@ -361,7 +296,6 @@ describe('message pipeline: user message → Telegram reply', () => {
     storeMessage(makeMessage('第三則', '2026-02-17T10:07:02.000Z'));
 
     mockContainerBehavior = async (onOutput) => {
-      // Verify prompt content via the mock
       const { runContainerAgent } = await import('../src/container-runner.js');
       const calls = vi.mocked(runContainerAgent).mock.calls;
       const prompt = (calls[calls.length - 1][1] as any).prompt;
@@ -375,15 +309,14 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.sentMessages).toEqual(['收到三則訊息']);
   });
 
   it('returns success with no container call when no pending messages', async () => {
-    // Don't store any messages
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.success).toBe(true);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -395,7 +328,7 @@ describe('message pipeline: user message → Telegram reply', () => {
       ...makeMessage(
         'TestBot:機器人回覆',
         '2026-02-17T10:08:01.000Z',
-        BOT_NAME,
+        TEST_BOT_NAME,
       ),
       is_bot_message: true,
     });
@@ -406,7 +339,6 @@ describe('message pipeline: user message → Telegram reply', () => {
       const calls = vi.mocked(runContainerAgent).mock.calls;
       const prompt = (calls[calls.length - 1][1] as any).prompt;
 
-      // Bot message should NOT be in the prompt
       expect(prompt).not.toContain('機器人回覆');
       expect(prompt).toContain('使用者訊息');
       expect(prompt).toContain('使用者第二則');
@@ -416,7 +348,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    await processMessages(CHAT_JID, '', {}, sendMessage);
+    await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
   });
 
   it('advances cursor to latest message timestamp on success', async () => {
@@ -429,7 +361,7 @@ describe('message pipeline: user message → Telegram reply', () => {
     };
 
     const sendMessage = vi.fn();
-    const r = await processMessages(CHAT_JID, '', {}, sendMessage);
+    const r = await processMessages(TEST_CHAT_JID, '', {}, sendMessage);
 
     expect(r.newCursor).toBe('2026-02-17T10:09:05.000Z');
   });
