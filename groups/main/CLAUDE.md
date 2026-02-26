@@ -67,3 +67,15 @@ You have access to Heptabase via MCP tools (prefixed with `mcp__heptabase__`). U
 - Browse whiteboard structures and connections
 
 When the user asks about their notes, knowledge base, or wants to save/organize information in Heptabase, use the Heptabase tools.
+
+### Token Expiry Recovery
+
+Heptabase OAuth tokens expire after **2 days** and have no refresh token. If `mcp__heptabase__*` tools are missing from the available tool list, or a call returns an authentication error, the token has expired.
+
+**You cannot re-authorize from inside the container.** The OAuth callback requires a browser on the host machine — the host browser cannot reach a localhost port inside the container.
+
+When token expires:
+1. Notify the user that the Heptabase token has expired
+2. Ask them to run the refresh on the host machine (they can use Claude Code's `/refresh-heptabase-token` skill)
+3. After they confirm the token is refreshed, call `mcp__nanoclaw__new_session` to reset the session
+4. Tell the user to resend their request — Heptabase tools will be available in the next session
