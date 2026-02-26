@@ -16,6 +16,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  MEDIA_DIR,
 } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -134,6 +135,15 @@ function buildVolumeMounts(config: OwnerConfig): VolumeMount[] {
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
+  });
+
+  // Media files (downloaded from Telegram)
+  const mediaDir = path.join(MEDIA_DIR, config.folder);
+  fs.mkdirSync(mediaDir, { recursive: true });
+  mounts.push({
+    hostPath: mediaDir,
+    containerPath: '/workspace/media',
+    readonly: true,
   });
 
   // Mount agent-runner source from host
@@ -366,6 +376,17 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Clean up staging media files
+      const mediaCleanupDir = path.join(MEDIA_DIR, config.folder);
+      try {
+        if (fs.existsSync(mediaCleanupDir)) {
+          fs.rmSync(mediaCleanupDir, { recursive: true, force: true });
+          fs.mkdirSync(mediaCleanupDir, { recursive: true });
+        }
+      } catch (err) {
+        logger.warn({ err, mediaDir: mediaCleanupDir }, 'Failed to clean up media staging dir');
+      }
 
       // Append footer to log file
       const footer = [

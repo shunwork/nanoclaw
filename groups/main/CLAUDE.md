@@ -47,6 +47,26 @@ The `conversations/` folder in this workspace contains archived past conversatio
 
 ---
 
+## 媒體附件處理
+
+收到 `<attachment>` 標籤時：
+- 用 `Read` tool 讀取 `path` 指向的檔案（圖片直接 Read，PDF 用 pages 參數）
+- 暫存檔案在 `/workspace/media/`，container 結束後會被清理
+
+### 保存重要媒體
+
+如果媒體有長期參考價值（使用者明確要求保存、重要文件、關鍵截圖等）：
+1. 用 `cp` 將檔案從 `/workspace/media/` 複製到 `/workspace/brain/media/`
+2. 使用有意義的檔名：`YYYY-MM-DD_描述.ext`（例如 `2026-02-24_system-architecture.png`）
+3. 在每日記錄或知識筆記中用 Obsidian 語法引用：`![[media/2026-02-24_system-architecture.png]]`
+4. 不需要保存的媒體就不要複製 — 直接在暫存區讀取並回應即可
+
+### 回憶已保存的媒體
+
+之前保存的媒體可以在 `/workspace/brain/media/` 中找到，使用者提到「之前那張圖」或「上次那個檔案」時：
+1. `ls /workspace/brain/media/` 或搜尋知識筆記中的 `![[media/` 引用
+2. 用 `Read` tool 讀取找到的檔案
+
 ## Container Mounts
 
 | Container Path | Host Path | Access |
@@ -54,6 +74,7 @@ The `conversations/` folder in this workspace contains archived past conversatio
 | `/workspace/project` | Project root | read-write |
 | `/workspace/group` | `groups/main/` | read-write |
 | `/workspace/brain` | `AgentBrain/` | read-write |
+| `/workspace/media` | `data/media/main/` | read-only |
 
 Key paths inside the container:
 - `/workspace/project/store/messages.db` - SQLite database

@@ -36,6 +36,14 @@ export interface OwnerConfig {
   containerConfig?: ContainerConfig;
 }
 
+export interface MessageAttachment {
+  type: 'photo' | 'document';
+  localPath: string;
+  fileName: string;
+  mimeType?: string;
+  fileSize?: number;
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -45,6 +53,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  attachments?: MessageAttachment[];
 }
 
 export interface ScheduledTask {

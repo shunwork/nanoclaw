@@ -30,6 +30,8 @@ export const AGENTBRAIN_DIR = path.resolve(PROJECT_ROOT, 'AgentBrain');
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+export const MEDIA_DIR = path.join(DATA_DIR, 'media');
+export const TELEGRAM_MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB (Telegram Bot API limit)
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
